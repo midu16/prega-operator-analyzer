@@ -79,7 +79,7 @@ jobs:
         path: bin/prega-operator-analyzer
 
   podman-build:
-    name: Build Podman Image
+    name: Build Podman Image (Single Arch)
     runs-on: ubuntu-latest
     needs: test
     steps:
@@ -110,13 +110,13 @@ jobs:
     - name: Upload Podman image artifact
       uses: actions/upload-artifact@v3
       with:
-        name: podman-image
+        name: podman-image-single
         path: image.tar
 
-  integration-test:
-    name: Integration Test
+  podman-build-multi:
+    name: Build Multi-Arch Podman Images
     runs-on: ubuntu-latest
-    needs: [test, podman-build]
+    needs: test
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -126,38 +126,95 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y podman
 
-    - name: Download Podman image artifact
+    - name: Build amd64 image
+      run: |
+        podman build --platform linux/amd64 -t ${{ env.IMAGE_NAME }}:${{ github.sha }}-amd64 .
+        podman build --platform linux/amd64 -t ${{ env.IMAGE_NAME }}:latest-amd64 .
+
+    - name: Build arm64 image
+      run: |
+        podman build --platform linux/arm64 -t ${{ env.IMAGE_NAME }}:${{ github.sha }}-arm64 .
+        podman build --platform linux/arm64 -t ${{ env.IMAGE_NAME }}:latest-arm64 .
+
+    - name: Test amd64 image
+      run: |
+        mkdir -p test-output-amd64
+        podman run --rm \
+          -v $(pwd)/test-output-amd64:/app/output:Z \
+          ${{ env.IMAGE_NAME }}:${{ github.sha }}-amd64 || echo "Test completed (some failures may be expected)"
+
+    - name: Test arm64 image
+      run: |
+        mkdir -p test-output-arm64
+        podman run --rm \
+          -v $(pwd)/test-output-arm64:/app/output:Z \
+          ${{ env.IMAGE_NAME }}:${{ github.sha }}-arm64 || echo "Test completed (some failures may be expected)"
+
+    - name: Save amd64 image
+      run: |
+        podman save ${{ env.IMAGE_NAME }}:${{ github.sha }}-amd64 -o image-amd64.tar
+
+    - name: Save arm64 image
+      run: |
+        podman save ${{ env.IMAGE_NAME }}:${{ github.sha }}-arm64 -o image-arm64.tar
+
+    - name: Upload amd64 image artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: podman-image-amd64
+        path: image-amd64.tar
+
+    - name: Upload arm64 image artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: podman-image-arm64
+        path: image-arm64.tar
+
+  integration-test:
+    name: Integration Test
+    runs-on: ubuntu-latest
+    needs: [test, podman-build-multi]
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Podman
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y podman
+
+    - name: Download Podman image artifacts
       uses: actions/download-artifact@v3
       with:
-        name: podman-image
+        name: podman-image-amd64
 
-    - name: Load Podman image
-      run: podman load -i image.tar
+    - name: Load amd64 image
+      run: podman load -i image-amd64.tar
 
-    - name: Run integration test
+    - name: Run integration test (amd64)
       run: |
-        mkdir -p integration-output
+        mkdir -p integration-output-amd64
         podman run --rm \
-          -v $(pwd)/integration-output:/app/output:Z \
-          ${{ env.IMAGE_NAME }}:${{ github.sha }} \
+          -v $(pwd)/integration-output-amd64:/app/output:Z \
+          ${{ env.IMAGE_NAME }}:${{ github.sha }}-amd64 \
           --prega-index=${{ env.PREGA_INDEX }} \
-          --output=/app/output/integration-test-release-notes.txt \
+          --output=/app/output/integration-test-release-notes-amd64.txt \
           --verbose || echo "Integration test completed (some failures may be expected)"
 
-    - name: Check output file
+    - name: Check amd64 output file
       run: |
-        if [ -f "integration-output/integration-test-release-notes.txt" ]; then
-          echo "Integration test output file created successfully"
-          echo "File size: $(wc -l < integration-output/integration-test-release-notes.txt) lines"
+        if [ -f "integration-output-amd64/integration-test-release-notes-amd64.txt" ]; then
+          echo "AMD64 integration test output file created successfully"
+          echo "File size: $(wc -l < integration-output-amd64/integration-test-release-notes-amd64.txt) lines"
         else
-          echo "Integration test output file not found"
+          echo "AMD64 integration test output file not found"
           exit 1
         fi
 
   security-scan:
     name: Security Scan
     runs-on: ubuntu-latest
-    needs: podman-build
+    needs: podman-build-multi
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -167,31 +224,31 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y podman
 
-    - name: Download Podman image artifact
+    - name: Download Podman image artifacts
       uses: actions/download-artifact@v3
       with:
-        name: podman-image
+        name: podman-image-amd64
 
-    - name: Load Podman image
-      run: podman load -i image.tar
+    - name: Load amd64 image
+      run: podman load -i image-amd64.tar
 
-    - name: Run Trivy vulnerability scanner
+    - name: Run Trivy vulnerability scanner (amd64)
       uses: aquasecurity/trivy-action@master
       with:
-        image-ref: ${{ env.IMAGE_NAME }}:${{ github.sha }}
+        image-ref: ${{ env.IMAGE_NAME }}:${{ github.sha }}-amd64
         format: 'sarif'
-        output: 'trivy-results.sarif'
+        output: 'trivy-results-amd64.sarif'
 
     - name: Upload Trivy scan results to GitHub Security tab
       uses: github/codeql-action/upload-sarif@v2
       if: always()
       with:
-        sarif_file: 'trivy-results.sarif'
+        sarif_file: 'trivy-results-amd64.sarif'
 
   release:
     name: Create Release
     runs-on: ubuntu-latest
-    needs: [test, build, podman-build, integration-test, security-scan]
+    needs: [test, build, podman-build-multi, integration-test, security-scan]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:
     - name: Checkout code
@@ -207,22 +264,31 @@ jobs:
       with:
         name: prega-operator-analyzer-binary
 
-    - name: Download Podman image artifact
+    - name: Download Podman image artifacts
       uses: actions/download-artifact@v3
       with:
-        name: podman-image
+        name: podman-image-amd64
 
-    - name: Load Podman image
-      run: podman load -i image.tar
+    - name: Download Podman image artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: podman-image-arm64
+
+    - name: Load images
+      run: |
+        podman load -i image-amd64.tar
+        podman load -i image-arm64.tar
 
     - name: Login to Quay.io
       run: |
         echo "${{ secrets.QUAY_PASSWORD }}" | podman login quay.io -u "${{ secrets.QUAY_USERNAME }}" --password-stdin
 
-    - name: Push Podman image
+    - name: Push multi-arch images
       run: |
-        podman push ${{ env.IMAGE_NAME }}:${{ github.sha }}
-        podman push ${{ env.IMAGE_NAME }}:latest
+        podman push ${{ env.IMAGE_NAME }}:${{ github.sha }}-amd64
+        podman push ${{ env.IMAGE_NAME }}:${{ github.sha }}-arm64
+        podman push ${{ env.IMAGE_NAME }}:latest-amd64
+        podman push ${{ env.IMAGE_NAME }}:latest-arm64
 
     - name: Generate changelog
       run: |
@@ -233,6 +299,7 @@ jobs:
         echo "- Built from commit: ${{ github.sha }}" >> CHANGELOG.md
         echo "- Prega Index: ${{ env.PREGA_INDEX }}" >> CHANGELOG.md
         echo "- Build Date: $(date -u)" >> CHANGELOG.md
+        echo "- Architectures: amd64, arm64" >> CHANGELOG.md
 
     - name: Create Release
       uses: actions/create-release@v1
@@ -255,12 +322,22 @@ jobs:
         asset_name: prega-operator-analyzer-linux-amd64
         asset_content_type: application/octet-stream
 
-    - name: Upload Podman Image Archive to Release
+    - name: Upload AMD64 Image Archive to Release
       uses: actions/upload-release-asset@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./image.tar
-        asset_name: prega-operator-analyzer-image.tar
+        asset_path: ./image-amd64.tar
+        asset_name: prega-operator-analyzer-image-amd64.tar
+        asset_content_type: application/octet-stream
+
+    - name: Upload ARM64 Image Archive to Release
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./image-arm64.tar
+        asset_name: prega-operator-analyzer-image-arm64.tar
         asset_content_type: application/octet-stream

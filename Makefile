@@ -27,16 +27,19 @@ help:
 	@echo "  deps           - Download dependencies"
 	@echo "  install-vibe-tools - Install vibe-tools (optional)"
 	@echo "  setup          - Setup project (deps + build)"
-	@echo "  podman-build   - Build Podman image"
+	@echo "  podman-build   - Build Podman image (single arch)"
+	@echo "  podman-build-multi - Build Podman image for amd64 and arm64"
 	@echo "  podman-test    - Test Podman image"
 	@echo "  podman-push    - Push Podman image to registry"
 	@echo "  podman-run     - Run Podman container with volume mounts"
 	@echo "  podman-clean   - Clean Podman artifacts"
 	@echo "  podman-all     - Full Podman workflow (build, test, push)"
+	@echo "  podman-all-multi - Full multi-arch Podman workflow"
 	@echo "  help           - Show this help message"
 	@echo ""
 	@echo "Podman Build Options:"
 	@echo "  TAG=v1.0.0 make podman-build    - Build with custom tag"
+	@echo "  TAG=v1.0.0 make podman-build-multi-tag - Build multi-arch with custom tag"
 	@echo "  make podman-build-only          - Build image only, don't push"
 	@echo "  make podman-test-only           - Run tests only"
 	@echo "  make podman-no-test             - Build and push without running tests"
@@ -110,7 +113,7 @@ clean-all: clean
 	@echo "Clean all complete"
 
 # Podman targets
-.PHONY: podman-build podman-test podman-push podman-run podman-clean podman-build-only podman-test-only podman-no-test
+.PHONY: podman-build podman-build-multi podman-test podman-push podman-run podman-clean podman-build-only podman-test-only podman-no-test
 
 # Check if Podman is running
 check-podman:
@@ -130,7 +133,7 @@ podman-run-tests:
 		exit 1; \
 	fi
 
-# Build Podman image
+# Build Podman image (single architecture)
 podman-build: check-podman
 	@echo "$(BLUE)[INFO]$(NC) Building Podman image: $(FULL_IMAGE_NAME)"
 	@if podman build -t $(FULL_IMAGE_NAME) .; then \
@@ -139,6 +142,29 @@ podman-build: check-podman
 		echo "$(RED)[ERROR]$(NC) Failed to build Podman image"; \
 		exit 1; \
 	fi
+
+# Build Podman image for multiple architectures (amd64 and arm64)
+podman-build-multi: check-podman
+	@echo "$(BLUE)[INFO]$(NC) Building multi-arch Podman image: $(FULL_IMAGE_NAME)"
+	@echo "$(BLUE)[INFO]$(NC) Architectures: amd64, arm64"
+	@echo "$(BLUE)[INFO]$(NC) Building for amd64..."
+	@if podman build --platform linux/amd64 -t $(FULL_IMAGE_NAME)-amd64 .; then \
+		echo "$(GREEN)[SUCCESS]$(NC) amd64 image built: $(FULL_IMAGE_NAME)-amd64"; \
+	else \
+		echo "$(RED)[ERROR]$(NC) Failed to build amd64 image"; \
+		exit 1; \
+	fi
+	@echo "$(BLUE)[INFO]$(NC) Building for arm64..."
+	@if podman build --platform linux/arm64 -t $(FULL_IMAGE_NAME)-arm64 .; then \
+		echo "$(GREEN)[SUCCESS]$(NC) arm64 image built: $(FULL_IMAGE_NAME)-arm64"; \
+	else \
+		echo "$(RED)[ERROR]$(NC) Failed to build arm64 image"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)[SUCCESS]$(NC) Multi-arch Podman images built successfully!"
+	@echo "$(BLUE)[INFO]$(NC) Images:"
+	@echo "  - $(FULL_IMAGE_NAME)-amd64 (linux/amd64)"
+	@echo "  - $(FULL_IMAGE_NAME)-arm64 (linux/arm64)"
 
 # Test Podman image
 podman-test: check-podman
@@ -167,6 +193,25 @@ podman-push: check-podman
 		exit 1; \
 	fi
 
+# Push multi-arch Podman images
+podman-push-multi: check-podman
+	@echo "$(BLUE)[INFO]$(NC) Pushing multi-arch Podman images to registry..."
+	@echo "$(BLUE)[INFO]$(NC) Pushing amd64 image..."
+	@if podman push $(FULL_IMAGE_NAME)-amd64; then \
+		echo "$(GREEN)[SUCCESS]$(NC) amd64 image pushed successfully"; \
+	else \
+		echo "$(RED)[ERROR]$(NC) Failed to push amd64 image"; \
+		exit 1; \
+	fi
+	@echo "$(BLUE)[INFO]$(NC) Pushing arm64 image..."
+	@if podman push $(FULL_IMAGE_NAME)-arm64; then \
+		echo "$(GREEN)[SUCCESS]$(NC) arm64 image pushed successfully"; \
+	else \
+		echo "$(RED)[ERROR]$(NC) Failed to push arm64 image"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)[SUCCESS]$(NC) All multi-arch images pushed successfully!"
+
 # Run Podman container with volume mounts
 podman-run: check-podman
 	@echo "$(BLUE)[INFO]$(NC) Running Podman container with volume mounts..."
@@ -179,6 +224,8 @@ podman-run: check-podman
 podman-clean:
 	@echo "$(BLUE)[INFO]$(NC) Cleaning Podman artifacts..."
 	@podman rmi $(FULL_IMAGE_NAME) 2>/dev/null || true
+	@podman rmi $(FULL_IMAGE_NAME)-amd64 2>/dev/null || true
+	@podman rmi $(FULL_IMAGE_NAME)-arm64 2>/dev/null || true
 	@rm -rf test-output
 	@echo "$(GREEN)[SUCCESS]$(NC) Podman cleanup completed"
 
@@ -204,6 +251,16 @@ podman-all: podman-run-tests podman-build podman-test podman-push podman-cleanup
 	@echo "$(BLUE)[INFO]$(NC) Image: $(FULL_IMAGE_NAME)"
 	@echo "$(BLUE)[INFO]$(NC) Usage: podman run -v /host/output:/app/output:Z $(FULL_IMAGE_NAME)"
 
+# Full multi-arch Podman workflow: build, test, and push
+podman-all-multi: podman-run-tests podman-build-multi podman-test podman-push-multi podman-cleanup
+	@echo "$(GREEN)[SUCCESS]$(NC) Full multi-arch Podman workflow completed successfully!"
+	@echo "$(BLUE)[INFO]$(NC) Images:"
+	@echo "  - $(FULL_IMAGE_NAME)-amd64 (linux/amd64)"
+	@echo "  - $(FULL_IMAGE_NAME)-arm64 (linux/arm64)"
+	@echo "$(BLUE)[INFO]$(NC) Usage:"
+	@echo "  podman run -v /host/output:/app/output:Z $(FULL_IMAGE_NAME)-amd64"
+	@echo "  podman run -v /host/output:/app/output:Z $(FULL_IMAGE_NAME)-arm64"
+
 # Cleanup test files
 podman-cleanup:
 	@echo "$(BLUE)[INFO]$(NC) Cleaning up test files..."
@@ -211,7 +268,7 @@ podman-cleanup:
 	@echo "$(GREEN)[SUCCESS]$(NC) Cleanup completed"
 
 # Advanced Podman targets with custom tags
-.PHONY: podman-build-tag podman-push-tag podman-all-tag
+.PHONY: podman-build-tag podman-build-multi-tag podman-push-tag podman-all-tag podman-all-multi-tag
 
 # Build with custom tag
 podman-build-tag: check-podman
@@ -227,6 +284,33 @@ podman-build-tag: check-podman
 		exit 1; \
 	fi
 
+# Build multi-arch with custom tag
+podman-build-multi-tag: check-podman
+	@if [ -z "$(TAG)" ]; then \
+		echo "$(RED)[ERROR]$(NC) TAG variable not set. Usage: make podman-build-multi-tag TAG=v1.0.0"; \
+		exit 1; \
+	fi
+	@echo "$(BLUE)[INFO]$(NC) Building multi-arch Podman images: $(PODMAN_IMAGE):$(TAG)"
+	@echo "$(BLUE)[INFO]$(NC) Architectures: amd64, arm64"
+	@echo "$(BLUE)[INFO]$(NC) Building for amd64..."
+	@if podman build --platform linux/amd64 -t $(PODMAN_IMAGE):$(TAG)-amd64 .; then \
+		echo "$(GREEN)[SUCCESS]$(NC) amd64 image built: $(PODMAN_IMAGE):$(TAG)-amd64"; \
+	else \
+		echo "$(RED)[ERROR]$(NC) Failed to build amd64 image"; \
+		exit 1; \
+	fi
+	@echo "$(BLUE)[INFO]$(NC) Building for arm64..."
+	@if podman build --platform linux/arm64 -t $(PODMAN_IMAGE):$(TAG)-arm64 .; then \
+		echo "$(GREEN)[SUCCESS]$(NC) arm64 image built: $(PODMAN_IMAGE):$(TAG)-arm64"; \
+	else \
+		echo "$(RED)[ERROR]$(NC) Failed to build arm64 image"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)[SUCCESS]$(NC) Multi-arch Podman images built successfully!"
+	@echo "$(BLUE)[INFO]$(NC) Images:"
+	@echo "  - $(PODMAN_IMAGE):$(TAG)-amd64 (linux/amd64)"
+	@echo "  - $(PODMAN_IMAGE):$(TAG)-arm64 (linux/arm64)"
+
 # Push with custom tag
 podman-push-tag: check-podman
 	@if [ -z "$(TAG)" ]; then \
@@ -241,8 +325,41 @@ podman-push-tag: check-podman
 		exit 1; \
 	fi
 
+# Push multi-arch with custom tag
+podman-push-multi-tag: check-podman
+	@if [ -z "$(TAG)" ]; then \
+		echo "$(RED)[ERROR]$(NC) TAG variable not set. Usage: make podman-push-multi-tag TAG=v1.0.0"; \
+		exit 1; \
+	fi
+	@echo "$(BLUE)[INFO]$(NC) Pushing multi-arch Podman images: $(PODMAN_IMAGE):$(TAG)"
+	@echo "$(BLUE)[INFO]$(NC) Pushing amd64 image..."
+	@if podman push $(PODMAN_IMAGE):$(TAG)-amd64; then \
+		echo "$(GREEN)[SUCCESS]$(NC) amd64 image pushed successfully"; \
+	else \
+		echo "$(RED)[ERROR]$(NC) Failed to push amd64 image"; \
+		exit 1; \
+	fi
+	@echo "$(BLUE)[INFO]$(NC) Pushing arm64 image..."
+	@if podman push $(PODMAN_IMAGE):$(TAG)-arm64; then \
+		echo "$(GREEN)[SUCCESS]$(NC) arm64 image pushed successfully"; \
+	else \
+		echo "$(RED)[ERROR]$(NC) Failed to push arm64 image"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)[SUCCESS]$(NC) All multi-arch images pushed successfully!"
+
 # Full workflow with custom tag
 podman-all-tag: podman-run-tests podman-build-tag podman-test podman-push-tag podman-cleanup
 	@echo "$(GREEN)[SUCCESS]$(NC) Full Podman workflow completed successfully!"
 	@echo "$(BLUE)[INFO]$(NC) Image: $(PODMAN_IMAGE):$(TAG)"
 	@echo "$(BLUE)[INFO]$(NC) Usage: podman run -v /host/output:/app/output:Z $(PODMAN_IMAGE):$(TAG)"
+
+# Full multi-arch workflow with custom tag
+podman-all-multi-tag: podman-run-tests podman-build-multi-tag podman-test podman-push-multi-tag podman-cleanup
+	@echo "$(GREEN)[SUCCESS]$(NC) Full multi-arch Podman workflow completed successfully!"
+	@echo "$(BLUE)[INFO]$(NC) Images:"
+	@echo "  - $(PODMAN_IMAGE):$(TAG)-amd64 (linux/amd64)"
+	@echo "  - $(PODMAN_IMAGE):$(TAG)-arm64 (linux/arm64)"
+	@echo "$(BLUE)[INFO]$(NC) Usage:"
+	@echo "  podman run -v /host/output:/app/output:Z $(PODMAN_IMAGE):$(TAG)-amd64"
+	@echo "  podman run -v /host/output:/app/output:Z $(PODMAN_IMAGE):$(TAG)-arm64"
