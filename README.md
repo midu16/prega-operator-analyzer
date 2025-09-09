@@ -14,6 +14,8 @@ A Golang tool that analyzes Prega operator index JSON files, extracts unique rep
 - **Smart fallback** - Uses cursor-agent vibe-tools, regular vibe-tools, or enhanced git analysis based on availability
 - **Duplicate removal** - Automatically removes duplicate repository URLs
 - **Comprehensive output** - Saves all release notes to a timestamped text file
+- **Containerized deployment** - Available as Podman container with volume mount support
+- **CI/CD automation** - GitHub Actions workflows for testing and releases
 
 ## Prerequisites
 
@@ -21,54 +23,73 @@ A Golang tool that analyzes Prega operator index JSON files, extracts unique rep
 2. **Git** (for cloning repositories)
 3. **vibe-tools** (optional, for enhanced release notes generation)
 4. **cursor-agent** (optional, for AI-enhanced release notes when using `--cursor-agent` flag)
+5. **Podman** (for containerized deployment)
 
 ## Installation
 
 1. Clone or download this project
 2. Navigate to the project directory
 3. Install dependencies:
-   ```bash
-   go mod tidy
-   ```
+```bash
+# Build and push with latest tag
+make podman-all
+
+# Build and push with custom tag
+TAG=v1.0.0 make podman-all-tag
+
+# Build image only (don't push)
+make podman-build-only
+
+# Run tests only
+make podman-test-only
+
+# Build and push without running tests
+make podman-no-test
+```
 
 ## Usage
 
 ### Basic Usage
 
 ```bash
-# Run with default settings
-go run cmd/main.go
+# Build and push with latest tag
+make podman-all
 
-# Or build and run the binary
-go build -o bin/prega-operator-analyzer cmd/main.go
-./bin/prega-operator-analyzer
+# Build and push with custom tag
+TAG=v1.0.0 make podman-all-tag
+
+# Build image only (don't push)
+make podman-build-only
+
+# Run tests only
+make podman-test-only
+
+# Build and push without running tests
+make podman-no-test
 ```
 
 ### Command Line Options
 
 ```bash
-# Show help
-./bin/prega-operator-analyzer --help
+# Build and push with latest tag
+make podman-all
 
-# Use a different Prega index
-./bin/prega-operator-analyzer --prega-index=quay.io/prega/prega-operator-index:v4.19.0
+# Build and push with custom tag
+TAG=v1.0.0 make podman-all-tag
 
-# Specify custom output file
-./bin/prega-operator-analyzer --output=my-release-notes.txt
+# Build image only (don't push)
+make podman-build-only
 
-# Enable verbose logging
-./bin/prega-operator-analyzer --verbose
+# Run tests only
+make podman-test-only
 
-# Use cursor-agent vibe-tools
-./bin/prega-operator-analyzer --cursor-agent
-
-# Use custom work directory
-./bin/prega-operator-analyzer --work-dir=/tmp/my-repos
+# Build and push without running tests
+make podman-no-test
 ```
 
 ### Available Flags
 
-- `--prega-index`: Prega operator index image to analyze (default: `quay.io/prega/prega-operator-index:v4.20.0-ec.6`)
+- `--prega-index`: Prega operator index image to analyze (default: `quay.io/prega/test/prega/prega-operator-index:v4.20-20250908T090030`)
 - `--output`: Output file for release notes (default: auto-generated timestamp)
 - `--work-dir`: Temporary directory for cloning repositories (default: `temp-repos`)
 - `--verbose`: Enable verbose logging
@@ -90,8 +111,20 @@ The tool will:
 If you prefer to generate the index JSON manually:
 
 ```bash
-mkdir -p prega-operator-index
-opm render quay.io/prega/prega-operator-index:v4.20.0-ec.6 --output=json >> prega-operator-index/index.json
+# Build and push with latest tag
+make podman-all
+
+# Build and push with custom tag
+TAG=v1.0.0 make podman-all-tag
+
+# Build image only (don't push)
+make podman-build-only
+
+# Run tests only
+make podman-test-only
+
+# Build and push without running tests
+make podman-no-test
 ```
 
 ## Project Structure
@@ -102,7 +135,15 @@ prega-operator-analyzer/
 │   └── main.go              # Main application entry point
 ├── pkg/
 │   ├── parser.go            # JSON parsing and repository extraction
-│   └── vibe_tools.go        # Vibe-tools integration and release notes generation
+│   ├── vibe_tools.go        # Vibe-tools integration and release notes generation
+│   ├── errors.go            # Error handling and retry logic
+│   ├── formatter.go         # Release notes formatting
+│   └── *_test.go           # Unit tests
+├── testdata/
+│   └── sample_index.json    # Test data
+├── .github/workflows/       # GitHub Actions CI/CD
+├── Dockerfile               # Podman container definition
+├── build.sh                # Build script for Podman
 ├── go.mod                   # Go module dependencies
 ├── go.sum                   # Go module checksums
 └── README.md               # This file
@@ -195,9 +236,82 @@ Repository: https://github.com/quay/container-security-operator
 ...
 ```
 
-## Troubleshooting
+## Podman Usage
 
-1. **"Index JSON file not found"**: Make sure you've run the `opm render` command first
-2. **"vibe-tools not found"**: Install vibe-tools or the tool will use basic release notes
-3. **Git clone failures**: Check network connectivity and repository accessibility
-4. **Permission errors**: Ensure write permissions for the output directory
+The prega-operator-analyzer is now available as a Podman container that can be run with volume mounts for output files.
+
+### Building the Podman Image
+
+```bash
+# Build and push with latest tag
+make podman-all
+
+# Build and push with custom tag
+TAG=v1.0.0 make podman-all-tag
+
+# Build image only (don't push)
+make podman-build-only
+
+# Run tests only
+make podman-test-only
+
+# Build and push without running tests
+make podman-no-test
+```
+
+### Running with Podman
+
+#### Basic Usage
+```bash
+# Build and push with latest tag
+make podman-all
+
+# Build and push with custom tag
+TAG=v1.0.0 make podman-all-tag
+
+# Build image only (don't push)
+make podman-build-only
+
+# Run tests only
+make podman-test-only
+
+# Build and push without running tests
+make podman-no-test
+```
+
+#### With Custom Prega Index
+```bash
+# Build and push with latest tag
+make podman-all
+
+# Build and push with custom tag
+TAG=v1.0.0 make podman-all-tag
+
+# Build image only (don't push)
+make podman-build-only
+
+# Run tests only
+make podman-test-only
+
+# Build and push without running tests
+make podman-no-test
+```
+
+#### Using Environment Variables
+```bash
+# Build and push with latest tag
+make podman-all
+
+# Build and push with custom tag
+TAG=v1.0.0 make podman-all-tag
+
+# Build image only (don't push)
+make podman-build-only
+
+# Run tests only
+make podman-test-only
+
+# Build and push without running tests
+make podman-no-test
+```
+

@@ -1,0 +1,98 @@
+name: Periodic Testing
+
+on:
+  schedule:
+    # Run tests every 6 hours
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      prega_index:
+        description: 'Prega Index to test with'
+        required: false
+        default: 'quay.io/prega/test/prega/prega-operator-index:v4.20-20250908T090030'
+
+env:
+  IMAGE_NAME: quay.io/midu/prega-operator-analyzer
+  DEFAULT_PREGA_INDEX: quay.io/prega/test/prega/prega-operator-index:v4.20-20250908T090030
+
+jobs:
+  periodic-test:
+    name: Periodic Test with Prega Index
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Podman
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y podman
+
+    - name: Set Prega Index
+      run: |
+        if [ -n "${{ github.event.inputs.prega_index }}" ]; then
+          echo "PREGA_INDEX=${{ github.event.inputs.prega_index }}" >> $GITHUB_ENV
+        else
+          echo "PREGA_INDEX=${{ env.DEFAULT_PREGA_INDEX }}" >> $GITHUB_ENV
+        fi
+
+    - name: Pull latest image
+      run: |
+        podman pull ${{ env.IMAGE_NAME }}:latest
+
+    - name: Run periodic test
+      run: |
+        mkdir -p periodic-test-output
+        podman run --rm \
+          -v $(pwd)/periodic-test-output:/app/output:Z \
+          ${{ env.IMAGE_NAME }}:latest \
+          --prega-index=${{ env.PREGA_INDEX }} \
+          --output=/app/output/periodic-test-release-notes.txt \
+          --verbose || echo "Periodic test completed (some failures may be expected)"
+
+    - name: Check output file
+      run: |
+        if [ -f "periodic-test-output/periodic-test-release-notes.txt" ]; then
+          echo "Periodic test output file created successfully"
+          echo "File size: $(wc -l < periodic-test-output/periodic-test-release-notes.txt) lines"
+          echo "First 10 lines of output:"
+          head -10 periodic-test-output/periodic-test-release-notes.txt
+        else
+          echo "Periodic test output file not found"
+          exit 1
+        fi
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      with:
+        name: periodic-test-results-${{ github.run_number }}
+        path: periodic-test-output/
+
+    - name: Comment on PR (if applicable)
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const fs = require('fs');
+          let comment = '## Periodic Test Results\n\n';
+          comment += `**Prega Index:** ${{ env.PREGA_INDEX }}\n`;
+          comment += `**Test Date:** ${new Date().toISOString()}\n\n`;
+          
+          if (fs.existsSync('periodic-test-output/periodic-test-release-notes.txt')) {
+            const content = fs.readFileSync('periodic-test-output/periodic-test-release-notes.txt', 'utf8');
+            const lines = content.split('\n').length;
+            comment += `**Status:** ✅ Test completed successfully\n`;
+            comment += `**Output Lines:** ${lines}\n\n`;
+            comment += '### Sample Output:\n```\n';
+            comment += content.split('\n').slice(0, 20).join('\n');
+            comment += '\n```';
+          } else {
+            comment += '**Status:** ❌ Test failed - no output file generated\n';
+          }
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });

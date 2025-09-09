@@ -1,0 +1,86 @@
+{
+  "schema": "olm.package",
+  "image": "quay.io/prega/test/prega/prega-operator-index:v4.20-20250908T090030",
+  "relatedImages": [],
+  "properties": [],
+  "packages": [
+    {
+      "schema": "olm.package",
+      "name": "compliance-operator",
+      "defaultChannel": "stable",
+      "description": "Compliance Operator for OpenShift",
+      "icon": {},
+      "channels": [
+        {
+          "name": "stable",
+          "currentCSV": "compliance-operator.v1.0.0",
+          "entries": [
+            {
+              "name": "compliance-operator.v1.0.0",
+              "properties": [
+                {
+                  "type": "olm.package",
+                  "value": {
+                    "repository": "https://github.com/ComplianceAsCode/compliance-operator"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schema": "olm.package",
+      "name": "container-security-operator",
+      "defaultChannel": "stable",
+      "description": "Container Security Operator",
+      "icon": {},
+      "channels": [
+        {
+          "name": "stable",
+          "currentCSV": "container-security-operator.v1.0.0",
+          "entries": [
+            {
+              "name": "container-security-operator.v1.0.0",
+              "properties": [
+                {
+                  "type": "olm.package",
+                  "value": {
+                    "repository": "https://github.com/quay/container-security-operator"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schema": "olm.package",
+      "name": "duplicate-test",
+      "defaultChannel": "stable",
+      "description": "Duplicate repository test",
+      "icon": {},
+      "channels": [
+        {
+          "name": "stable",
+          "currentCSV": "duplicate-test.v1.0.0",
+          "entries": [
+            {
+              "name": "duplicate-test.v1.0.0",
+              "properties": [
+                {
+                  "type": "olm.package",
+                  "value": {
+                    "repository": "https://github.com/ComplianceAsCode/compliance-operator"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

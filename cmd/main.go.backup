@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -16,13 +15,12 @@ import (
 func main() {
 	// Command line flags
 	var (
-		pregaIndex   = flag.String("prega-index", "quay.io/prega/test/prega/prega-operator-index:v4.20-20250908T090030", "Prega operator index image to analyze")
+		pregaIndex   = flag.String("prega-index", "quay.io/prega/prega-operator-index:v4.20.0-ec.6", "Prega operator index image to analyze")
 		outputFile   = flag.String("output", "", "Output file for release notes (default: auto-generated timestamp)")
-		workDir      = flag.String("work-dir", "", "Temporary directory for cloning repositories")
+		workDir      = flag.String("work-dir", "temp-repos", "Temporary directory for cloning repositories")
 		verbose      = flag.Bool("verbose", false, "Enable verbose logging")
 		cursorAgent  = flag.Bool("cursor-agent", false, "Use cursor-agent vibe-tools for enhanced release notes")
 		help         = flag.Bool("help", false, "Show help message")
-		indexFile    = flag.String("index-file", "", "Path to index.json file")
 	)
 	flag.Parse()
 
@@ -42,28 +40,11 @@ func main() {
 		FullTimestamp: true,
 	})
 
-	// Configuration with environment variable support
-	indexJSONPath := getEnvOrDefault("INDEX_FILE", "prega-operator-index/index.json")
-	if *indexFile != "" {
-		indexJSONPath = *indexFile
-	}
-
-	defaultWorkDir := getEnvOrDefault("WORK_DIR", "temp-repos")
-	if *workDir == "" {
-		*workDir = defaultWorkDir
-	}
-
-	outputDir := getEnvOrDefault("OUTPUT_DIR", ".")
+	// Configuration
+	indexJSONPath := "prega-operator-index/index.json"
 	if *outputFile == "" {
-		timestamp := time.Now().Format("2006-01-02-15-04-05")
-		*outputFile = filepath.Join(outputDir, fmt.Sprintf("release-notes-%s.txt", timestamp))
+		*outputFile = fmt.Sprintf("release-notes-%s.txt", time.Now().Format("2006-01-02-15-04-05"))
 	}
-
-	logger.Infof("Configuration:")
-	logger.Infof("  Index file: %s", indexJSONPath)
-	logger.Infof("  Work directory: %s", *workDir)
-	logger.Infof("  Output file: %s", *outputFile)
-	logger.Infof("  Prega index: %s", *pregaIndex)
 
 	// Check if index.json exists, if not, generate it
 	if _, err := os.Stat(indexJSONPath); os.IsNotExist(err) {
@@ -105,12 +86,6 @@ func main() {
 		logger.Fatalf("Failed to create work directory: %v", err)
 	}
 
-	// Ensure output directory exists
-	outputDirPath := filepath.Dir(*outputFile)
-	if err := os.MkdirAll(outputDirPath, 0755); err != nil {
-		logger.Fatalf("Failed to create output directory: %v", err)
-	}
-
 	// Initialize VibeToolsManager with cursor-agent flag
 	vibeManager := pkg.NewVibeToolsManager(*workDir, *outputFile, *cursorAgent)
 
@@ -129,14 +104,6 @@ func main() {
 	fmt.Printf("\nRelease notes saved to: %s\n", *outputFile)
 }
 
-// getEnvOrDefault returns environment variable value or default if not set
-func getEnvOrDefault(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return defaultValue
-}
-
 // showHelp displays the help message
 func showHelp() {
 	fmt.Println("Prega Operator Analyzer")
@@ -149,11 +116,6 @@ func showHelp() {
 	fmt.Println()
 	fmt.Println("Flags:")
 	flag.PrintDefaults()
-	fmt.Println()
-	fmt.Println("Environment Variables:")
-	fmt.Println("  INDEX_FILE    - Path to index.json file (default: prega-operator-index/index.json)")
-	fmt.Println("  WORK_DIR      - Temporary directory for cloning repositories (default: temp-repos)")
-	fmt.Println("  OUTPUT_DIR    - Directory for output files (default: current directory)")
 	fmt.Println()
 	fmt.Println("Examples:")
 	fmt.Println("  # Use default Prega index")
@@ -170,24 +132,12 @@ func showHelp() {
 	fmt.Println()
 	fmt.Println("  # Use cursor-agent vibe-tools")
 	fmt.Println("  prega-operator-analyzer --cursor-agent")
-	fmt.Println()
-	fmt.Println("  # Use custom index file")
-	fmt.Println("  prega-operator-analyzer --index-file=/path/to/index.json")
-	fmt.Println()
-	fmt.Println("Docker Usage:")
-	fmt.Println("  # Run with volume mounts")
-	fmt.Println("  docker run -v /host/data:/app/data -v /host/output:/app/output \\")
-	fmt.Println("    quay.io/midu/prega-operator-analyzer:latest")
-	fmt.Println()
-	fmt.Println("  # Run with custom index file")
-	fmt.Println("  docker run -v /host/index.json:/app/data/index.json \\")
-	fmt.Println("    quay.io/midu/prega-operator-analyzer:latest")
 }
 
 // generateIndexJSON generates the index JSON file using opm render
 func generateIndexJSON(pregaIndex, outputPath string, logger *logrus.Logger) error {
 	// Create directory if it doesn't exist
-	dir := filepath.Dir(outputPath)
+	dir := "prega-operator-index"
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("failed to create directory %s: %w", dir, err)
 	}
