@@ -1,0 +1,165 @@
+name: Functional Test
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  REGISTRY: quay.io
+  IMAGE_NAME: quay.io/midu/prega-operator-analyzer
+  PREGA_INDEX: quay.io/prega/prega-operator-index:v4.20-20250909T144138
+
+jobs:
+  functional-test:
+    name: Functional Test
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
+
+    - name: Cache Go modules
+      uses: actions/cache@v4
+      with:
+        path: ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: Download dependencies
+      run: go mod download
+
+    - name: Build binary
+      run: |
+        mkdir -p bin
+        go build -o bin/prega-operator-analyzer ./cmd
+
+    - name: Install opm (for local testing)
+      run: |
+        curl -L https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/4.17.21/opm-linux-4.17.21.tar.gz -o opm-linux-4.17.21.tar.gz
+        tar xvf opm-linux-4.17.21.tar.gz
+        sudo mv opm-rhel8 /usr/local/bin/opm
+        sudo chmod +x /usr/local/bin/opm
+        rm opm-linux-4.17.21.tar.gz
+
+    - name: Verify opm installation
+      run: |
+        opm version
+        which opm
+
+    - name: Test basic functionality
+      run: |
+        # Test help command
+        ./bin/prega-operator-analyzer --help
+        
+        # Test with verbose output
+        ./bin/prega-operator-analyzer --prega-index=${{ env.PREGA_INDEX }} --verbose --output=test-release-notes.txt
+        
+        # Verify output file was created
+        if [ ! -f "test-release-notes.txt" ]; then
+          echo "ERROR: Output file was not created"
+          exit 1
+        fi
+        
+        # Check if output file has content
+        if [ ! -s "test-release-notes.txt" ]; then
+          echo "ERROR: Output file is empty"
+          exit 1
+        fi
+        
+        echo "✅ Output file created successfully with content"
+        echo "File size: $(wc -l < test-release-notes.txt) lines"
+
+    - name: Test cleanup functionality
+      run: |
+        # Verify prega-operator-index directory was cleaned up
+        if [ -d "prega-operator-index" ]; then
+          echo "❌ ERROR: prega-operator-index directory was not cleaned up"
+          ls -la prega-operator-index/
+          exit 1
+        else
+          echo "✅ SUCCESS: prega-operator-index directory was properly cleaned up"
+        fi
+        
+        # Verify temp-repos directory was cleaned up
+        if [ -d "temp-repos" ]; then
+          echo "❌ ERROR: temp-repos directory was not cleaned up"
+          ls -la temp-repos/
+          exit 1
+        else
+          echo "✅ SUCCESS: temp-repos directory was properly cleaned up"
+        fi
+
+    - name: Test environment variable support
+      run: |
+        # Test with environment variables
+        export PREGA_INDEX="${{ env.PREGA_INDEX }}"
+        export OUTPUT_FILE="env-test-release-notes.txt"
+        export VERBOSE="true"
+        
+        ./bin/prega-operator-analyzer
+        
+        # Verify output file was created
+        if [ ! -f "env-test-release-notes.txt" ]; then
+          echo "ERROR: Environment variable output file was not created"
+          exit 1
+        fi
+        
+        echo "✅ Environment variable test passed"
+
+    - name: Test cleanup with environment variables
+      run: |
+        # Verify cleanup still works with environment variables
+        if [ -d "prega-operator-index" ]; then
+          echo "❌ ERROR: prega-operator-index directory was not cleaned up after env var test"
+          exit 1
+        else
+          echo "✅ SUCCESS: Cleanup works with environment variables"
+        fi
+
+    - name: Test error handling
+      run: |
+        # Test with invalid prega index (should fail gracefully)
+        ./bin/prega-operator-analyzer --prega-index=invalid-index:latest --verbose --output=error-test.txt || echo "Expected failure with invalid index"
+        
+        # Verify cleanup still happens even on error
+        if [ -d "prega-operator-index" ]; then
+          echo "❌ ERROR: prega-operator-index directory was not cleaned up after error"
+          exit 1
+        else
+          echo "✅ SUCCESS: Cleanup works even after errors"
+        fi
+
+    - name: Upload test artifacts
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: functional-test-results
+        path: |
+          test-release-notes.txt
+          env-test-release-notes.txt
+          error-test.txt
+        retention-days: 7
+
+    - name: Test summary
+      run: |
+        echo "## Functional Test Results" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "✅ All functional tests passed!" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Test Coverage:" >> $GITHUB_STEP_SUMMARY
+        echo "- Basic functionality test" >> $GITHUB_STEP_SUMMARY
+        echo "- Cleanup functionality test" >> $GITHUB_STEP_SUMMARY
+        echo "- Environment variable support test" >> $GITHUB_STEP_SUMMARY
+        echo "- Error handling test" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Generated Files:" >> $GITHUB_STEP_SUMMARY
+        echo "- test-release-notes.txt: $(wc -l < test-release-notes.txt) lines" >> $GITHUB_STEP_SUMMARY
+        echo "- env-test-release-notes.txt: $(wc -l < env-test-release-notes.txt) lines" >> $GITHUB_STEP_SUMMARY

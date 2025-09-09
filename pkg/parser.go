@@ -92,28 +92,115 @@ func ParseOperatorIndex(filePath string) ([]string, error) {
 		})
 	}
 
-	var index OperatorIndex
-	if err := json.Unmarshal(content, &index); err != nil {
-		return nil, WrapError(err, ErrorTypeParsing, "failed to parse JSON", map[string]interface{}{
-			"file_path": filePath,
-			"file_size": len(content),
-		})
+	// Try to parse as newline-delimited JSON (NDJSON) format first
+	var allEntries []map[string]interface{}
+	lines := strings.Split(string(content), "\n")
+	ndjsonSuccess := true
+	
+	// Parse JSON objects that may span multiple lines
+	currentJSON := ""
+	braceCount := 0
+	
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		
+		currentJSON += line
+		
+		// Count braces to determine when we have a complete JSON object
+		for _, char := range line {
+			if char == '{' {
+				braceCount++
+			} else if char == '}' {
+				braceCount--
+			}
+		}
+		
+		// If braces are balanced, we have a complete JSON object
+		if braceCount == 0 && currentJSON != "" {
+			var entry map[string]interface{}
+			if err := json.Unmarshal([]byte(currentJSON), &entry); err != nil {
+				ndjsonSuccess = false
+				break
+			}
+			allEntries = append(allEntries, entry)
+			currentJSON = ""
+		}
+	}
+
+	// If NDJSON parsing failed, try parsing as regular JSON
+	if !ndjsonSuccess {
+		var index OperatorIndex
+		if err := json.Unmarshal(content, &index); err != nil {
+			return nil, WrapError(err, ErrorTypeParsing, "failed to parse JSON", map[string]interface{}{
+				"file_path": filePath,
+				"file_size": len(content),
+			})
+		}
+		// Convert to map for consistent processing
+		indexBytes, _ := json.Marshal(index)
+		var entry map[string]interface{}
+		json.Unmarshal(indexBytes, &entry)
+		allEntries = []map[string]interface{}{entry}
 	}
 
 	repositories := make(map[string]bool)
 	
-	// Extract repositories from packages
-	for _, pkg := range index.Packages {
-		for _, channel := range pkg.Channels {
-			for _, entry := range channel.Entries {
-				for _, prop := range entry.Properties {
-					if prop.Type == "olm.package" || prop.Type == "olm.bundle" {
-						if propMap, ok := prop.Value.(map[string]interface{}); ok {
-							if repo, exists := propMap["repository"]; exists {
-								if repoStr, ok := repo.(string); ok {
-									// Validate repository URL
-									if isValidRepositoryURL(repoStr) {
-										repositories[repoStr] = true
+	// Extract repositories from all entries
+	for _, entry := range allEntries {
+		// Extract repository directly from entry if it exists
+		if repo, exists := entry["repository"]; exists {
+			if repoStr, ok := repo.(string); ok {
+				if isValidRepositoryURL(repoStr) {
+					repositories[repoStr] = true
+				}
+			}
+		}
+		
+		// Extract from properties if they exist
+		if properties, exists := entry["properties"]; exists {
+			if propsArray, ok := properties.([]interface{}); ok {
+				for _, prop := range propsArray {
+					if propMap, ok := prop.(map[string]interface{}); ok {
+						// Check for repository in olm.csv.metadata annotations
+						if propType, typeExists := propMap["type"]; typeExists {
+							if propTypeStr, ok := propType.(string); ok {
+								if propTypeStr == "olm.csv.metadata" {
+									if propValue, valueExists := propMap["value"]; valueExists {
+										if valueMap, ok := propValue.(map[string]interface{}); ok {
+											if annotations, annExists := valueMap["annotations"]; annExists {
+												if annMap, ok := annotations.(map[string]interface{}); ok {
+													if repo, repoExists := annMap["repository"]; repoExists {
+														if repoStr, ok := repo.(string); ok {
+															if isValidRepositoryURL(repoStr) {
+																repositories[repoStr] = true
+															}
+														}
+													}
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+						
+						// Legacy format: olm.package or olm.bundle
+						if propType, typeExists := propMap["type"]; typeExists {
+							if propTypeStr, ok := propType.(string); ok {
+								if propTypeStr == "olm.package" || propTypeStr == "olm.bundle" {
+									if propValue, valueExists := propMap["value"]; valueExists {
+										if valueMap, ok := propValue.(map[string]interface{}); ok {
+											if repo, repoExists := valueMap["repository"]; repoExists {
+												if repoStr, ok := repo.(string); ok {
+													if isValidRepositoryURL(repoStr) {
+														repositories[repoStr] = true
+													}
+												}
+											}
+										}
 									}
 								}
 							}

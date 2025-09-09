@@ -19,15 +19,23 @@ COPY . .
 # Build the application
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o prega-operator-analyzer ./cmd
 
-# Final stage
-FROM alpine:latest
+# Final stage - Use UBI base image and install opm
+FROM registry.access.redhat.com/ubi8/ubi-minimal:latest
 
-# Install runtime dependencies
-RUN apk --no-cache add ca-certificates git tzdata
+# Install opm and additional dependencies
+RUN microdnf install -y git ca-certificates tzdata bash curl tar && \
+    microdnf clean all
+
+# Install opm from Operator Framework
+RUN curl -L https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/4.17.21/opm-linux-4.17.21.tar.gz -o opm-linux-4.17.21.tar.gz && \
+    tar xvf opm-linux-4.17.21.tar.gz && \
+    mv opm-rhel8 /usr/local/bin/opm && \
+    chmod +x /usr/local/bin/opm && \
+    rm opm-linux-4.17.21.tar.gz
 
 # Create non-root user
-RUN addgroup -g 1001 -S appgroup && \
-    adduser -u 1001 -S appuser -G appgroup
+RUN groupadd -g 1001 appgroup && \
+    useradd -u 1001 -g appgroup -s /bin/bash appuser
 
 # Set working directory
 WORKDIR /app
@@ -55,8 +63,10 @@ ENV VERBOSE=true
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD ["./prega-operator-analyzer", "--help"] || exit 1
 
-# Default command - use environment variables for configuration
-ENTRYPOINT ["./prega-operator-analyzer"]
+# Create a startup script that properly expands environment variables
+RUN echo '#!/bin/bash' > /app/start.sh && \
+    echo 'exec ./prega-operator-analyzer --prega-index="${PREGA_INDEX}" --output="/app/output/${OUTPUT_FILE}" --verbose' >> /app/start.sh && \
+    chmod +x /app/start.sh
 
-# Default arguments - use environment variables
-CMD ["--prega-index=${PREGA_INDEX}", "--output=/app/output/${OUTPUT_FILE}", "--verbose"]
+# Use the startup script as entrypoint
+ENTRYPOINT ["/app/start.sh"]

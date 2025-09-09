@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -121,6 +122,15 @@ func main() {
 	}
 
 	// Clean up work directory
+
+	// Clean up prega-operator-index directory if it was created
+	if _, err := os.Stat("prega-operator-index"); err == nil {
+		if err := os.RemoveAll("prega-operator-index"); err != nil {
+			logger.Warnf("Failed to clean up prega-operator-index directory: %v", err)
+		} else {
+			logger.Debug("Successfully cleaned up prega-operator-index directory")
+		}
+	}
 	if err := os.RemoveAll(*workDir); err != nil {
 		logger.Warnf("Failed to clean up work directory: %v", err)
 	}
@@ -192,14 +202,31 @@ func generateIndexJSON(pregaIndex, outputPath string, logger *logrus.Logger) err
 		return fmt.Errorf("failed to create directory %s: %w", dir, err)
 	}
 
-	// Run opm render command
-	cmd := fmt.Sprintf("opm render %s --output=json >> %s", pregaIndex, outputPath)
-	logger.Debugf("Executing command: %s", cmd)
+	// Check if opm is available
+	opmPath, err := exec.LookPath("opm")
+	if err != nil {
+		return fmt.Errorf("opm command not found in PATH. Please ensure opm is installed and available: %w", err)
+	}
+	logger.Debugf("Found opm at: %s", opmPath)
+
+	// Create output file
+	outputFile, err := os.Create(outputPath)
+	if err != nil {
+		return fmt.Errorf("failed to create output file %s: %w", outputPath, err)
+	}
+	defer outputFile.Close()
+
+	// Execute opm render command
+	cmd := exec.Command("opm", "render", pregaIndex, "--output=json")
+	cmd.Stdout = outputFile
+	cmd.Stderr = os.Stderr
+
+	logger.Debugf("Executing command: opm render %s --output=json > %s", pregaIndex, outputPath)
 	
-	// Note: In a production environment, you might want to use exec.Command
-	// For now, we'll provide instructions to the user
-	logger.Info("Please run the following command to generate the index JSON:")
-	logger.Infof("  %s", cmd)
-	
-	return fmt.Errorf("index JSON file not found. Please generate it first using the command above")
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to execute opm render command: %w", err)
+	}
+
+	logger.Debugf("Successfully generated index JSON at: %s", outputPath)
+	return nil
 }

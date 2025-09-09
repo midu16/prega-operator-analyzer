@@ -1,0 +1,140 @@
+name: Container Functional Test
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  REGISTRY: quay.io
+  IMAGE_NAME: quay.io/midu/prega-operator-analyzer
+  PREGA_INDEX: quay.io/prega/prega-operator-index:v4.20-20250909T144138
+
+jobs:
+  container-functional-test:
+    name: Container Functional Test
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Podman
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y podman
+
+    - name: Build container image
+      run: |
+        podman build -t ${{ env.IMAGE_NAME }}:test .
+
+    - name: Test container basic functionality
+      run: |
+        # Test help command
+        podman run --rm ${{ env.IMAGE_NAME }}:test --help
+        
+        # Test with verbose output
+        mkdir -p test-output
+        podman run --rm \
+          -v $(pwd)/test-output:/app/output:Z \
+          -e PREGA_INDEX=${{ env.PREGA_INDEX }} \
+          -e OUTPUT_FILE=container-test-release-notes.txt \
+          -e VERBOSE=true \
+          ${{ env.IMAGE_NAME }}:test
+        
+        # Verify output file was created
+        if [ ! -f "test-output/container-test-release-notes.txt" ]; then
+          echo "ERROR: Container output file was not created"
+          exit 1
+        fi
+        
+        # Check if output file has content
+        if [ ! -s "test-output/container-test-release-notes.txt" ]; then
+          echo "ERROR: Container output file is empty"
+          exit 1
+        fi
+        
+        echo "✅ Container output file created successfully with content"
+        echo "File size: $(wc -l < test-output/container-test-release-notes.txt) lines"
+
+    - name: Test container cleanup functionality
+      run: |
+        # Test that container cleans up internal directories
+        mkdir -p test-output-cleanup
+        podman run --rm \
+          -v $(pwd)/test-output-cleanup:/app/output:Z \
+          -e PREGA_INDEX=${{ env.PREGA_INDEX }} \
+          -e OUTPUT_FILE=cleanup-test.txt \
+          ${{ env.IMAGE_NAME }}:test
+        
+        # Check what's left in the container after execution
+        echo "Checking container filesystem after execution..."
+        podman run --rm ${{ env.IMAGE_NAME }}:test /bin/bash -c "ls -la /app/ || echo 'No /app directory'"
+        podman run --rm ${{ env.IMAGE_NAME }}:test /bin/bash -c "ls -la / || echo 'Root directory listing'"
+
+    - name: Test container with opm command
+      run: |
+        # Test opm functionality inside container
+        mkdir -p test-output-opm
+        podman run --rm \
+          -v $(pwd)/test-output-opm:/app/output:Z \
+          ${{ env.IMAGE_NAME }}:test \
+          opm version
+        
+        # Test opm render command
+        podman run --rm \
+          -v $(pwd)/test-output-opm:/app/output:Z \
+          ${{ env.IMAGE_NAME }}:test \
+          opm render ${{ env.PREGA_INDEX }} --output=json > test-output-opm/index.json
+        
+        # Verify index.json was created
+        if [ ! -f "test-output-opm/index.json" ]; then
+          echo "ERROR: opm render did not create index.json"
+          exit 1
+        fi
+        
+        echo "✅ opm render test passed"
+        echo "Index.json size: $(wc -l < test-output-opm/index.json) lines"
+
+    - name: Test container error handling
+      run: |
+        # Test with invalid prega index (should fail gracefully)
+        mkdir -p test-output-error
+        podman run --rm \
+          -v $(pwd)/test-output-error:/app/output:Z \
+          -e PREGA_INDEX=invalid-index:latest \
+          -e OUTPUT_FILE=error-test.txt \
+          ${{ env.IMAGE_NAME }}:test || echo "Expected failure with invalid index"
+
+    - name: Upload container test artifacts
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: container-functional-test-results
+        path: |
+          test-output/
+          test-output-cleanup/
+          test-output-opm/
+          test-output-error/
+        retention-days: 7
+
+    - name: Container test summary
+      run: |
+        echo "## Container Functional Test Results" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "✅ All container functional tests passed!" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Test Coverage:" >> $GITHUB_STEP_SUMMARY
+        echo "- Container basic functionality test" >> $GITHUB_STEP_SUMMARY
+        echo "- Container cleanup functionality test" >> $GITHUB_STEP_SUMMARY
+        echo "- Container opm integration test" >> $GITHUB_STEP_SUMMARY
+        echo "- Container error handling test" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Generated Files:" >> $GITHUB_STEP_SUMMARY
+        if [ -f "test-output/container-test-release-notes.txt" ]; then
+          echo "- container-test-release-notes.txt: $(wc -l < test-output/container-test-release-notes.txt) lines" >> $GITHUB_STEP_SUMMARY
+        fi
+        if [ -f "test-output-opm/index.json" ]; then
+          echo "- index.json: $(wc -l < test-output-opm/index.json) lines" >> $GITHUB_STEP_SUMMARY
+        fi
