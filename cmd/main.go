@@ -17,7 +17,7 @@ import (
 func main() {
 	// Command line flags
 	var (
-		pregaIndex   = flag.String("prega-index", "quay.io/prega/test/prega/prega-operator-index:v4.20-20250908T090030", "Prega operator index image to analyze")
+		pregaIndex   = flag.String("prega-index", "quay.io/prega/prega-operator-index:v4.20-20250908T090030", "Prega operator index image to analyze")
 		outputFile   = flag.String("output", "", "Output file for release notes (default: auto-generated timestamp)")
 		workDir      = flag.String("work-dir", "", "Temporary directory for cloning repositories")
 		verbose      = flag.Bool("verbose", false, "Enable verbose logging")
