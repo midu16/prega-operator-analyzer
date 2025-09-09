@@ -1,0 +1,8 @@
+# GitHub Packages Configuration
+# Add this to your ~/.npmrc file to install packages from GitHub Packages
+
+@midu:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=YOUR_GITHUB_TOKEN
+
+# To install the package:
+# npm install @midu/prega-operator-analyzer
