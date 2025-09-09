@@ -181,6 +181,10 @@ jobs:
         path: image-amd64.tar
 
     - name: Upload arm64 image artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: podman-image-arm64
+        path: image-arm64.tar
 
     - name: Login to Quay.io
       run: |
