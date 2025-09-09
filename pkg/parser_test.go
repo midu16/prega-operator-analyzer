@@ -14,7 +14,7 @@ func TestParseOperatorIndex(t *testing.T) {
 	}{
 		{
 			name:          "valid index file",
-			indexFile:     "testdata/sample_index.json",
+			indexFile:     "../testdata/sample_index.json",
 			expectedCount: 2, // Should deduplicate the duplicate repository
 			expectedRepos: []string{
 				"https://github.com/ComplianceAsCode/compliance-operator",
@@ -24,7 +24,7 @@ func TestParseOperatorIndex(t *testing.T) {
 		},
 		{
 			name:        "non-existent file",
-			indexFile:   "testdata/non_existent.json",
+			indexFile:   "../testdata/non_existent.json",
 			expectError: true,
 		},
 	}
