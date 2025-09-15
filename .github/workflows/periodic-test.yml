@@ -176,23 +176,22 @@ jobs:
         
         # Create a summary report
         echo "Creating test execution summary..."
-        cat > periodic-test-output/test-summary.txt << EOF
-Periodic Test Execution Summary
-==============================
-Test Date: $(date)
-Image: ${{ env.IMAGE_NAME }}:latest
-Prega Index: ${{ env.PREGA_INDEX }}
-Runner: ${{ runner.os }} (${{ runner.arch }})
-Workflow Run: ${{ github.run_number }}
-Commit: ${{ github.sha }}
-
-Output Files Found:
-$(find periodic-test-output -type f -name "*.txt" -exec echo "- {}" \;)
-
-Directory Contents:
-$(ls -la periodic-test-output/ 2>/dev/null || echo "Directory is empty")
-
-EOF
+        {
+          echo "Periodic Test Execution Summary"
+          echo "=============================="
+          echo "Test Date: $(date)"
+          echo "Image: ${{ env.IMAGE_NAME }}:latest"
+          echo "Prega Index: ${{ env.PREGA_INDEX }}"
+          echo "Runner: ${{ runner.os }} (${{ runner.arch }})"
+          echo "Workflow Run: ${{ github.run_number }}"
+          echo "Commit: ${{ github.sha }}"
+          echo ""
+          echo "Output Files Found:"
+          find periodic-test-output -type f -name "*.txt" -exec echo "- {}" \;
+          echo ""
+          echo "Directory Contents:"
+          ls -la periodic-test-output/ 2>/dev/null || echo "Directory is empty"
+        } > periodic-test-output/test-summary.txt
         echo "Test summary created: periodic-test-output/test-summary.txt"
 
     - name: Upload test results
