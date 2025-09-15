@@ -19,19 +19,12 @@ COPY . .
 # Build the application
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o prega-operator-analyzer ./cmd
 
-# Final stage - Use UBI base image and install opm
-FROM registry.access.redhat.com/ubi8/ubi-minimal:latest
+# Final stage - Use OPM base image
+FROM quay.io/operator-framework/opm:latest
 
-# Install opm and additional dependencies
+# Install additional dependencies
 RUN microdnf install -y git ca-certificates tzdata bash curl tar && \
     microdnf clean all
-
-# Install opm from Operator Framework
-RUN curl -L https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/4.17.21/opm-linux-4.17.21.tar.gz -o opm-linux-4.17.21.tar.gz && \
-    tar xvf opm-linux-4.17.21.tar.gz && \
-    mv opm-rhel8 /usr/local/bin/opm && \
-    chmod +x /usr/local/bin/opm && \
-    rm opm-linux-4.17.21.tar.gz
 
 # Create non-root user
 RUN groupadd -g 1001 appgroup && \
