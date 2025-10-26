@@ -1,6 +1,6 @@
 {
   "schema": "olm.package",
-  "image": "quay.io/prega/prega-operator-index:v4.20-20250908T090030",
+  "image": "quay.io/prega/prega-operator-index:v4.21-20251025T205504",
   "relatedImages": [],
   "properties": [],
   "packages": [

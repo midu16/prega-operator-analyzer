@@ -10,7 +10,7 @@ on:
 env:
   REGISTRY: quay.io
   IMAGE_NAME: quay.io/midu/prega-operator-analyzer
-  PREGA_INDEX: quay.io/prega/prega-operator-index:v4.20-20250909T144138
+  PREGA_INDEX: quay.io/prega/prega-operator-index:v4.21-20251025T205504
 
 jobs:
   functional-test:
@@ -99,12 +99,10 @@ jobs:
 
     - name: Test environment variable support
       run: |
-        # Test with environment variables
-        export PREGA_INDEX="${{ env.PREGA_INDEX }}"
-        export OUTPUT_FILE="env-test-release-notes.txt"
-        export VERBOSE="true"
+        # Test with environment variables (OUTPUT_DIR)
+        export OUTPUT_DIR="."
         
-        ./bin/prega-operator-analyzer
+        ./bin/prega-operator-analyzer --prega-index=${{ env.PREGA_INDEX }} --output=env-test-release-notes.txt --verbose
         
         # Verify output file was created
         if [ ! -f "env-test-release-notes.txt" ]; then

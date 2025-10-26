@@ -89,7 +89,7 @@ make podman-no-test
 
 ### Available Flags
 
-- `--prega-index`: Prega operator index image to analyze (default: `quay.io/prega/prega-operator-index:v4.20-20250908T090030`)
+- `--prega-index`: Prega operator index image to analyze (default: `quay.io/prega/prega-operator-index:v4.21-20251025T205504`)
 - `--output`: Output file for release notes (default: auto-generated timestamp)
 - `--work-dir`: Temporary directory for cloning repositories (default: `temp-repos`)
 - `--verbose`: Enable verbose logging

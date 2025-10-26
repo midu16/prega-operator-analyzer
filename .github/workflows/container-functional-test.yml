@@ -10,7 +10,7 @@ on:
 env:
   REGISTRY: quay.io
   IMAGE_NAME: quay.io/midu/prega-operator-analyzer
-  PREGA_INDEX: quay.io/prega/prega-operator-index:v4.20-20250909T144138
+  PREGA_INDEX: quay.io/prega/prega-operator-index:v4.21-20251025T205504
 
 jobs:
   container-functional-test:

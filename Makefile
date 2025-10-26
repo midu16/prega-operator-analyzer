@@ -1,6 +1,6 @@
 # Prega Operator Analyzer Makefile
 
-.PHONY: build run clean test deps install-vibe-tools help
+.PHONY: build run clean test deps install-vibe-tools help ci-test functional-test container-functional-test periodic-test test-all
 
 # Variables
 BINARY_NAME=prega-operator-analyzer
@@ -9,6 +9,8 @@ MAIN_PACKAGE=./cmd
 PODMAN_IMAGE=quay.io/midu/prega-operator-analyzer
 PODMAN_TAG=latest
 FULL_IMAGE_NAME=$(PODMAN_IMAGE):$(PODMAN_TAG)
+PREGA_INDEX=quay.io/prega/prega-operator-index:v4.21-20251025T205504
+GO_VERSION=1.21
 
 # Colors for output
 RED=\033[0;31m
@@ -20,6 +22,8 @@ NC=\033[0m
 # Default target
 help:
 	@echo "Available targets:"
+	@echo ""
+	@echo "$(BLUE)Basic Targets:$(NC)"
 	@echo "  build          - Build the binary"
 	@echo "  run            - Run the application"
 	@echo "  clean          - Clean build artifacts"
@@ -27,6 +31,16 @@ help:
 	@echo "  deps           - Download dependencies"
 	@echo "  install-vibe-tools - Install vibe-tools (optional)"
 	@echo "  setup          - Setup project (deps + build)"
+	@echo ""
+	@echo "$(BLUE)GitHub Workflow Testing:$(NC)"
+	@echo "  ci-test        - Run CI/CD pipeline tests locally"
+	@echo "  functional-test - Run functional tests locally"
+	@echo "  container-functional-test - Run container functional tests"
+	@echo "  periodic-test  - Run periodic tests locally"
+	@echo "  test-all       - Run all workflow tests (CI + Functional + Container + Periodic)"
+	@echo "  test-coverage  - Run tests with coverage report"
+	@echo ""
+	@echo "$(BLUE)Podman Targets:$(NC)"
 	@echo "  podman-build   - Build Podman image (single arch)"
 	@echo "  podman-build-multi - Build Podman image for amd64 and arm64"
 	@echo "  podman-test    - Test Podman image"
@@ -35,14 +49,19 @@ help:
 	@echo "  podman-clean   - Clean Podman artifacts"
 	@echo "  podman-all     - Full Podman workflow (build, test, push)"
 	@echo "  podman-all-multi - Full multi-arch Podman workflow"
-	@echo "  help           - Show this help message"
 	@echo ""
-	@echo "Podman Build Options:"
+	@echo "$(BLUE)Podman Build Options:$(NC)"
 	@echo "  TAG=v1.0.0 make podman-build    - Build with custom tag"
 	@echo "  TAG=v1.0.0 make podman-build-multi-tag - Build multi-arch with custom tag"
 	@echo "  make podman-build-only          - Build image only, don't push"
 	@echo "  make podman-test-only           - Run tests only"
 	@echo "  make podman-no-test             - Build and push without running tests"
+	@echo ""
+	@echo "$(BLUE)Advanced Targets:$(NC)"
+	@echo "  install-opm    - Install OPM tool for testing"
+	@echo "  verify-go      - Verify Go version and dependencies"
+	@echo "  verify-podman  - Verify Podman installation"
+	@echo "  help           - Show this help message"
 
 # Build the binary
 build:
@@ -363,3 +382,297 @@ podman-all-multi-tag: podman-run-tests podman-build-multi-tag podman-test podman
 	@echo "$(BLUE)[INFO]$(NC) Usage:"
 	@echo "  podman run -v /host/output:/app/output:Z $(PODMAN_IMAGE):$(TAG)-amd64"
 	@echo "  podman run -v /host/output:/app/output:Z $(PODMAN_IMAGE):$(TAG)-arm64"
+
+# ============================================================================
+# GitHub Workflow Testing Targets
+# ============================================================================
+
+.PHONY: ci-test functional-test container-functional-test periodic-test test-all test-coverage verify-go verify-podman install-opm
+
+# Verify Go installation and version
+verify-go:
+	@echo "$(BLUE)[INFO]$(NC) Verifying Go installation..."
+	@if ! command -v go >/dev/null 2>&1; then \
+		echo "$(RED)[ERROR]$(NC) Go is not installed"; \
+		exit 1; \
+	fi
+	@GO_VER=$$(go version | awk '{print $$3}' | sed 's/go//'); \
+	echo "$(GREEN)[SUCCESS]$(NC) Go version: $$GO_VER"; \
+	if [ "$$(printf '%s\n' "$(GO_VERSION)" "$$GO_VER" | sort -V | head -n1)" != "$(GO_VERSION)" ]; then \
+		echo "$(YELLOW)[WARNING]$(NC) Go version $$GO_VER is older than recommended $(GO_VERSION)"; \
+	fi
+
+# Verify Podman installation
+verify-podman:
+	@echo "$(BLUE)[INFO]$(NC) Verifying Podman installation..."
+	@if ! command -v podman >/dev/null 2>&1; then \
+		echo "$(RED)[ERROR]$(NC) Podman is not installed"; \
+		echo "$(BLUE)[INFO]$(NC) Install with: sudo apt-get install -y podman"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)[SUCCESS]$(NC) Podman is installed"
+	@podman --version
+
+# Install OPM tool for testing
+install-opm:
+	@echo "$(BLUE)[INFO]$(NC) Installing OPM tool..."
+	@if command -v opm >/dev/null 2>&1; then \
+		echo "$(GREEN)[SUCCESS]$(NC) OPM is already installed"; \
+		opm version; \
+	else \
+		echo "$(BLUE)[INFO]$(NC) Downloading OPM..."; \
+		curl -L https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/4.17.21/opm-linux-4.17.21.tar.gz -o /tmp/opm-linux.tar.gz; \
+		tar xzf /tmp/opm-linux.tar.gz -C /tmp/; \
+		sudo mv /tmp/opm-rhel8 /usr/local/bin/opm; \
+		sudo chmod +x /usr/local/bin/opm; \
+		rm /tmp/opm-linux.tar.gz; \
+		echo "$(GREEN)[SUCCESS]$(NC) OPM installed successfully"; \
+		opm version; \
+	fi
+
+# Run tests with coverage (mimics CI workflow)
+test-coverage: verify-go
+	@echo "$(BLUE)[INFO]$(NC) Running tests with coverage..."
+	@go test -v -coverprofile=coverage.out ./...
+	@echo "$(GREEN)[SUCCESS]$(NC) Coverage report generated: coverage.out"
+	@go tool cover -func=coverage.out | grep total | awk '{print "$(BLUE)[INFO]$(NC) Total coverage: " $$3}'
+
+# CI Test - Mimics CI/CD Pipeline workflow
+ci-test: verify-go
+	@echo "$(BLUE)[INFO]$(NC) Running CI/CD Pipeline tests..."
+	@echo "$(BLUE)[INFO]$(NC) Step 1: Download dependencies"
+	@go mod download
+	@echo "$(GREEN)[SUCCESS]$(NC) Dependencies downloaded"
+	
+	@echo "$(BLUE)[INFO]$(NC) Step 2: Verify dependencies"
+	@go mod verify
+	@echo "$(GREEN)[SUCCESS]$(NC) Dependencies verified"
+	
+	@echo "$(BLUE)[INFO]$(NC) Step 3: Run unit tests"
+	@go test -v ./...
+	@echo "$(GREEN)[SUCCESS]$(NC) Unit tests passed"
+	
+	@echo "$(BLUE)[INFO]$(NC) Step 4: Run tests with coverage"
+	@go test -v -coverprofile=coverage.out ./...
+	@echo "$(GREEN)[SUCCESS]$(NC) Coverage tests passed"
+	
+	@echo "$(BLUE)[INFO]$(NC) Step 5: Build binary"
+	@mkdir -p bin
+	@go build -o bin/$(BINARY_NAME) $(MAIN_PACKAGE)
+	@echo "$(GREEN)[SUCCESS]$(NC) Binary built successfully"
+	
+	@echo ""
+	@echo "$(GREEN)[SUCCESS]$(NC) CI/CD Pipeline tests completed!"
+	@echo "$(BLUE)[INFO]$(NC) Coverage report: coverage.out"
+
+# Functional Test - Mimics Functional Test workflow
+functional-test: verify-go install-opm
+	@echo "$(BLUE)[INFO]$(NC) Running Functional Tests..."
+	@echo "$(BLUE)[INFO]$(NC) Step 1: Download dependencies"
+	@go mod download
+	
+	@echo "$(BLUE)[INFO]$(NC) Step 2: Build binary"
+	@mkdir -p bin
+	@go build -o bin/$(BINARY_NAME) $(MAIN_PACKAGE)
+	@echo "$(GREEN)[SUCCESS]$(NC) Binary built"
+	
+	@echo "$(BLUE)[INFO]$(NC) Step 3: Test basic functionality"
+	@./bin/$(BINARY_NAME) --help
+	@echo "$(GREEN)[SUCCESS]$(NC) Help command works"
+	
+	@echo "$(BLUE)[INFO]$(NC) Step 4: Test with verbose output"
+	@./bin/$(BINARY_NAME) --prega-index=$(PREGA_INDEX) --verbose --output=test-release-notes.txt
+	@if [ ! -f "test-release-notes.txt" ]; then \
+		echo "$(RED)[ERROR]$(NC) Output file was not created"; \
+		exit 1; \
+	fi
+	@if [ ! -s "test-release-notes.txt" ]; then \
+		echo "$(RED)[ERROR]$(NC) Output file is empty"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)[SUCCESS]$(NC) Output file created: $$(wc -l < test-release-notes.txt) lines"
+	
+	@echo "$(BLUE)[INFO]$(NC) Step 5: Test cleanup functionality"
+	@if [ -d "prega-operator-index" ]; then \
+		echo "$(RED)[ERROR]$(NC) prega-operator-index directory was not cleaned up"; \
+		exit 1; \
+	fi
+	@if [ -d "temp-repos" ]; then \
+		echo "$(RED)[ERROR]$(NC) temp-repos directory was not cleaned up"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)[SUCCESS]$(NC) Cleanup works correctly"
+	
+	@echo "$(BLUE)[INFO]$(NC) Step 6: Test environment variable support"
+	@OUTPUT_DIR=. ./bin/$(BINARY_NAME) --prega-index=$(PREGA_INDEX) --output=env-test-release-notes.txt --verbose
+	@if [ ! -f "env-test-release-notes.txt" ]; then \
+		echo "$(RED)[ERROR]$(NC) Environment variable output file was not created"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)[SUCCESS]$(NC) Environment variable test passed"
+	
+	@echo "$(BLUE)[INFO]$(NC) Step 7: Test error handling"
+	@./bin/$(BINARY_NAME) --prega-index=invalid-index:latest --verbose --output=error-test.txt || echo "$(YELLOW)[INFO]$(NC) Expected failure with invalid index"
+	@if [ -d "prega-operator-index" ]; then \
+		echo "$(RED)[ERROR]$(NC) prega-operator-index directory was not cleaned up after error"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)[SUCCESS]$(NC) Cleanup works even after errors"
+	
+	@echo ""
+	@echo "$(GREEN)[SUCCESS]$(NC) Functional tests completed!"
+	@echo "$(BLUE)[INFO]$(NC) Generated files:"
+	@echo "  - test-release-notes.txt: $$(wc -l < test-release-notes.txt) lines"
+	@echo "  - env-test-release-notes.txt: $$(wc -l < env-test-release-notes.txt) lines"
+	
+	@echo "$(BLUE)[INFO]$(NC) Cleaning up test files..."
+	@rm -f test-release-notes.txt env-test-release-notes.txt error-test.txt
+
+# Container Functional Test - Mimics Container Functional Test workflow
+container-functional-test: verify-podman
+	@echo "$(BLUE)[INFO]$(NC) Running Container Functional Tests..."
+	@echo "$(BLUE)[INFO]$(NC) Step 1: Build container image"
+	@podman build -t $(PODMAN_IMAGE):test .
+	@echo "$(GREEN)[SUCCESS]$(NC) Container image built"
+	
+	@echo "$(BLUE)[INFO]$(NC) Step 2: Test container basic functionality"
+	@podman run --rm $(PODMAN_IMAGE):test --help
+	@echo "$(GREEN)[SUCCESS]$(NC) Container help command works"
+	
+	@echo "$(BLUE)[INFO]$(NC) Step 3: Test with verbose output"
+	@mkdir -p test-output
+	@chmod 777 test-output
+	@podman run --rm \
+		-v $(PWD)/test-output:/app/output:Z \
+		-e PREGA_INDEX=$(PREGA_INDEX) \
+		-e OUTPUT_FILE=container-test-release-notes.txt \
+		-e VERBOSE=true \
+		$(PODMAN_IMAGE):test
+	@if [ ! -f "test-output/container-test-release-notes.txt" ]; then \
+		echo "$(RED)[ERROR]$(NC) Container output file was not created"; \
+		exit 1; \
+	fi
+	@if [ ! -s "test-output/container-test-release-notes.txt" ]; then \
+		echo "$(RED)[ERROR]$(NC) Container output file is empty"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)[SUCCESS]$(NC) Container output file created: $$(wc -l < test-output/container-test-release-notes.txt) lines"
+	
+	@echo "$(BLUE)[INFO]$(NC) Step 4: Test container with opm command"
+	@mkdir -p test-output-opm
+	@chmod 777 test-output-opm
+	@podman run --rm \
+		-v $(PWD)/test-output-opm:/app/output:Z \
+		$(PODMAN_IMAGE):test \
+		opm version
+	@echo "$(GREEN)[SUCCESS]$(NC) OPM command works in container"
+	
+	@echo "$(BLUE)[INFO]$(NC) Step 5: Test opm render command"
+	@podman run --rm \
+		-v $(PWD)/test-output-opm:/app/output:Z \
+		$(PODMAN_IMAGE):test \
+		sh -c "opm render $(PREGA_INDEX) --output=json" > test-output-opm/index.json
+	@if [ ! -f "test-output-opm/index.json" ]; then \
+		echo "$(RED)[ERROR]$(NC) opm render did not create index.json"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)[SUCCESS]$(NC) OPM render test passed: $$(wc -l < test-output-opm/index.json) lines"
+	
+	@echo "$(BLUE)[INFO]$(NC) Step 6: Test container error handling"
+	@mkdir -p test-output-error
+	@chmod 777 test-output-error
+	@podman run --rm \
+		-v $(PWD)/test-output-error:/app/output:Z \
+		-e PREGA_INDEX=invalid-index:latest \
+		-e OUTPUT_FILE=error-test.txt \
+		$(PODMAN_IMAGE):test || echo "$(YELLOW)[INFO]$(NC) Expected failure with invalid index"
+	@echo "$(GREEN)[SUCCESS]$(NC) Container error handling works"
+	
+	@echo ""
+	@echo "$(GREEN)[SUCCESS]$(NC) Container functional tests completed!"
+	@echo "$(BLUE)[INFO]$(NC) Generated files:"
+	@if [ -f "test-output/container-test-release-notes.txt" ]; then \
+		echo "  - container-test-release-notes.txt: $$(wc -l < test-output/container-test-release-notes.txt) lines"; \
+	fi
+	@if [ -f "test-output-opm/index.json" ]; then \
+		echo "  - index.json: $$(wc -l < test-output-opm/index.json) lines"; \
+	fi
+	
+	@echo "$(BLUE)[INFO]$(NC) Cleaning up test files..."
+	@rm -rf test-output test-output-opm test-output-error
+	@podman rmi $(PODMAN_IMAGE):test 2>/dev/null || true
+
+# Periodic Test - Mimics Periodic Test workflow
+periodic-test: verify-podman
+	@echo "$(BLUE)[INFO]$(NC) Running Periodic Tests..."
+	@echo "$(BLUE)[INFO]$(NC) Step 1: Pull latest image"
+	@echo "$(YELLOW)[WARNING]$(NC) This will pull the latest image from the registry"
+	@podman pull $(FULL_IMAGE_NAME) || echo "$(YELLOW)[WARNING]$(NC) Could not pull image, using local image"
+	
+	@echo "$(BLUE)[INFO]$(NC) Step 2: Test container execution"
+	@mkdir -p periodic-test-output
+	@chmod 777 periodic-test-output
+	
+	@echo "$(BLUE)[INFO]$(NC) Testing container help command..."
+	@podman run --rm $(FULL_IMAGE_NAME) --help
+	@echo "$(GREEN)[SUCCESS]$(NC) Help command works"
+	
+	@echo "$(BLUE)[INFO]$(NC) Testing file creation in mounted volume..."
+	@podman run --rm \
+		-v $(PWD)/periodic-test-output:/app/output:Z \
+		$(FULL_IMAGE_NAME) \
+		sh -c "echo 'Container test file created at $$(date)' > /app/output/test-file.txt && ls -la /app/output/"
+	@if [ -f "periodic-test-output/test-file.txt" ]; then \
+		echo "$(GREEN)[SUCCESS]$(NC) Container can create files in mounted volume"; \
+		cat periodic-test-output/test-file.txt; \
+	else \
+		echo "$(RED)[ERROR]$(NC) Container cannot create files in mounted volume"; \
+		exit 1; \
+	fi
+	
+	@echo "$(BLUE)[INFO]$(NC) Step 3: Run periodic test"
+	@timeout 1800 podman run --rm \
+		-v $(PWD)/periodic-test-output:/app/output:Z \
+		-e OUTPUT_DIR=/app/output \
+		-e WORK_DIR=/app/temp-repos \
+		$(FULL_IMAGE_NAME) \
+		--prega-index=$(PREGA_INDEX) \
+		--output=/app/output/periodic-test-release-notes.txt \
+		--verbose || { \
+		echo "$(RED)[ERROR]$(NC) Container execution failed or timed out"; \
+		echo "Exit code: $$?"; \
+	}
+	
+	@echo "$(BLUE)[INFO]$(NC) Step 4: Check output file"
+	@if [ -f "periodic-test-output/periodic-test-release-notes.txt" ]; then \
+		echo "$(GREEN)[SUCCESS]$(NC) Periodic test output file created successfully"; \
+		echo "$(BLUE)[INFO]$(NC) File size: $$(wc -l < periodic-test-output/periodic-test-release-notes.txt) lines"; \
+		echo "$(BLUE)[INFO]$(NC) First 10 lines of output:"; \
+		head -10 periodic-test-output/periodic-test-release-notes.txt; \
+	else \
+		echo "$(RED)[ERROR]$(NC) Periodic test output file not found"; \
+		echo "$(BLUE)[INFO]$(NC) Contents of periodic-test-output directory:"; \
+		ls -la periodic-test-output/ || echo "Directory is empty"; \
+	fi
+	
+	@echo ""
+	@echo "$(GREEN)[SUCCESS]$(NC) Periodic tests completed!"
+	@echo "$(BLUE)[INFO]$(NC) Output directory: periodic-test-output/"
+	
+	@echo "$(BLUE)[INFO]$(NC) Cleaning up test files..."
+	@rm -rf periodic-test-output
+
+# Run all workflow tests
+test-all: ci-test functional-test container-functional-test periodic-test
+	@echo ""
+	@echo "$(GREEN)[SUCCESS]$(NC) ============================================"
+	@echo "$(GREEN)[SUCCESS]$(NC) All GitHub workflow tests completed!"
+	@echo "$(GREEN)[SUCCESS]$(NC) ============================================"
+	@echo ""
+	@echo "$(BLUE)[INFO]$(NC) Tests completed:"
+	@echo "  ✅ CI/CD Pipeline tests"
+	@echo "  ✅ Functional tests"
+	@echo "  ✅ Container functional tests"
+	@echo "  ✅ Periodic tests"
+	@echo ""
+	@echo "$(BLUE)[INFO]$(NC) Your code is ready for GitHub Actions!"

@@ -9,11 +9,11 @@ on:
       prega_index:
         description: 'Prega Index to test with'
         required: false
-        default: 'quay.io/prega/prega-operator-index:v4.20-20250908T090030'
+        default: 'quay.io/prega/prega-operator-index:v4.21-20251025T205504'
 
 env:
   IMAGE_NAME: quay.io/midu/prega-operator-analyzer
-  DEFAULT_PREGA_INDEX: quay.io/prega/prega-operator-index:v4.20-20250908T090030
+  DEFAULT_PREGA_INDEX: quay.io/prega/prega-operator-index:v4.21-20251025T205504
 
 jobs:
   periodic-test:
@@ -50,6 +50,7 @@ jobs:
       run: |
         echo "Testing basic container execution..."
         mkdir -p periodic-test-output
+        chmod 777 periodic-test-output
         
         # Test if the container can run and show help
         echo "Testing container help command:"
@@ -89,6 +90,7 @@ jobs:
     - name: Run periodic test
       run: |
         mkdir -p periodic-test-output
+        chmod 777 periodic-test-output
         echo "Starting periodic test with image: ${{ env.IMAGE_NAME }}:latest"
         echo "Using Prega index: ${{ env.PREGA_INDEX }}"
         echo "Output directory: $(pwd)/periodic-test-output"
