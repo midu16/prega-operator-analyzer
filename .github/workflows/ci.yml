@@ -1,10 +1,11 @@
+---
 name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [main, develop]
   pull_request:
-    branches: [ main ]
+    branches: [main]
   schedule:
     # Run tests daily at 2 AM UTC
     - cron: '0 2 * * *'
@@ -12,183 +13,242 @@ on:
 env:
   REGISTRY: quay.io
   IMAGE_NAME: quay.io/midu/prega-operator-analyzer
-  PREGA_INDEX: quay.io/prega/prega-operator-index:v4.21-20251025T205504
+  # PREGA_INDEX will be set dynamically by the get-latest-tag job
 
 jobs:
+  get-latest-tag:
+    name: Get Latest Prega Index Tag
+    runs-on: ubuntu-latest
+    outputs:
+      prega_index: ${{ steps.get-tag.outputs.prega_index }}
+      latest_tag: ${{ steps.get-tag.outputs.latest_tag }}
+    steps:
+      - name: Fetch latest tag from Quay.io
+        id: get-tag
+        run: |
+          # Install skopeo for registry inspection
+          sudo apt-get update
+          sudo apt-get install -y skopeo
+          
+          # Get the latest tag from the registry
+          echo "Fetching latest tag from quay.io/prega/prega-operator-index..."
+          
+          # Get all tags and find the latest semantic version tag
+          LATEST_TAG=$(skopeo list-tags \
+            docker://quay.io/prega/prega-operator-index 2>/dev/null | \
+            jq -r '.Tags[]' | \
+            grep -E '^v[0-9]+\.[0-9]+.*' | \
+            sort -V | \
+            tail -1)
+          
+          # Fallback to hardcoded tag if no tags found or command fails
+          if [ -z "$LATEST_TAG" ] || [ "$LATEST_TAG" = "null" ]; then
+            echo "Warning: Could not fetch latest tag, using fallback"
+            LATEST_TAG="v4.21-20251025T205504"
+          fi
+          
+          PREGA_INDEX="quay.io/prega/prega-operator-index:${LATEST_TAG}"
+          
+          echo "Latest tag found: $LATEST_TAG"
+          echo "Using Prega index: $PREGA_INDEX"
+          
+          echo "prega_index=$PREGA_INDEX" >> $GITHUB_OUTPUT
+          echo "latest_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+
   test:
     name: Run Tests
     runs-on: ubuntu-latest
+    needs: get-latest-tag
+    env:
+      PREGA_INDEX: ${{ needs.get-latest-tag.outputs.prega_index }}
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: '1.21'
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
 
-    - name: Cache Go modules
-      uses: actions/cache@v4
-      with:
-        path: ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
 
-    - name: Download dependencies
-      run: go mod download
+      - name: Download dependencies
+        run: go mod download
 
-    - name: Verify dependencies
-      run: go mod verify
+      - name: Verify dependencies
+        run: go mod verify
 
-    - name: Run unit tests
-      run: go test -v ./...
+      - name: Run unit tests
+        run: go test -v ./...
 
-    - name: Run tests with coverage
-      run: go test -v -coverprofile=coverage.out ./...
+      - name: Run tests with coverage
+        run: go test -v -coverprofile=coverage.out ./...
 
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v4
-      with:
-        file: ./coverage.out
-        flags: unittests
-        name: codecov-umbrella
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.out
+          flags: unittests
+          name: codecov-umbrella
 
   build:
     name: Build Binary
     runs-on: ubuntu-latest
-    needs: test
+    needs: [get-latest-tag, test]
+    env:
+      PREGA_INDEX: ${{ needs.get-latest-tag.outputs.prega_index }}
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: '1.21'
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
 
-    - name: Build binary
-      run: |
-        mkdir -p bin
-        go build -o bin/prega-operator-analyzer ./cmd
+      - name: Build binary
+        run: |
+          mkdir -p bin
+          go build -o bin/prega-operator-analyzer ./cmd
 
-    - name: Upload binary artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: prega-operator-analyzer-binary
-        path: bin/prega-operator-analyzer
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: prega-operator-analyzer-binary
+          path: bin/prega-operator-analyzer
 
   podman-build:
     name: Build Podman Image (Single Arch)
     runs-on: ubuntu-latest
-    needs: test
+    needs: [get-latest-tag, test]
+    env:
+      PREGA_INDEX: ${{ needs.get-latest-tag.outputs.prega_index }}
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Install Podman
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y podman
+      - name: Install Podman
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman
 
-    - name: Build Podman image
-      run: |
-        podman build -t ${{ env.IMAGE_NAME }}:latest .
+      - name: Build Podman image
+        run: |
+          podman build -t ${{ env.IMAGE_NAME }}:latest .
 
-    - name: Test Podman image
-      run: |
-        mkdir -p test-output
-        podman run --rm \
-          -v $(pwd)/test-output:/app/output:Z \
-          ${{ env.IMAGE_NAME }}:latest || echo "Test completed (some failures may be expected)"
+      - name: Test Podman image
+        run: |
+          mkdir -p test-output
+          podman run --rm \
+            -v $(pwd)/test-output:/app/output:Z \
+            ${{ env.IMAGE_NAME }}:latest || \
+            echo "Test completed (some failures may be expected)"
 
-    - name: Save Podman image
-      run: |
-        podman save ${{ env.IMAGE_NAME }}:latest -o image.tar
+      - name: Save Podman image
+        run: |
+          podman save ${{ env.IMAGE_NAME }}:latest -o image.tar
 
-    - name: Login to Quay.io
-      run: |
-        echo "${{ secrets.QUAY_PASSWORD }}" | podman login quay.io -u "${{ secrets.QUAY_USERNAME }}" --password-stdin
+      - name: Login to Quay.io
+        run: |
+          echo "${{ secrets.QUAY_PASSWORD }}" | \
+            podman login quay.io -u "${{ secrets.QUAY_USERNAME }}" \
+            --password-stdin
 
-    - name: Push single arch images to Quay.io
-      run: |
-        podman push ${{ env.IMAGE_NAME }}:latest
+      - name: Push single arch images to Quay.io
+        run: |
+          podman push ${{ env.IMAGE_NAME }}:latest
 
-    - name: Upload Podman image artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: podman-image-single
-        path: image.tar
+      - name: Upload Podman image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: podman-image-single
+          path: image.tar
 
   podman-build-multi:
     name: Build Multi-Arch Podman Images
     runs-on: ubuntu-latest
-    needs: test
+    needs: [get-latest-tag, test]
+    env:
+      PREGA_INDEX: ${{ needs.get-latest-tag.outputs.prega_index }}
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Install Podman and QEMU
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y podman qemu-user-static binfmt-support
+      - name: Install Podman and QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman qemu-user-static binfmt-support
 
-    - name: Set up QEMU emulation
-      run: |
-        # Register QEMU handlers for cross-platform builds
-        sudo podman run --rm --privileged multiarch/qemu-user-static --reset -p yes
-        
-        # Verify QEMU setup
-        podman run --rm --platform linux/arm64 alpine:latest echo "QEMU ARM64 emulation working"
+      - name: Set up QEMU emulation
+        run: |
+          # Register QEMU handlers for cross-platform builds
+          sudo podman run --rm --privileged \
+            multiarch/qemu-user-static --reset -p yes
+          
+          # Verify QEMU setup
+          podman run --rm --platform linux/arm64 alpine:latest \
+            echo "QEMU ARM64 emulation working"
 
-    - name: Build amd64 image
-      run: |
-        podman build --platform linux/amd64 -t ${{ env.IMAGE_NAME }}:latest-amd64 .
+      - name: Build amd64 image
+        run: |
+          podman build --platform linux/amd64 \
+            -t ${{ env.IMAGE_NAME }}:latest-amd64 .
 
-    - name: Build arm64 image
-      run: |
-        podman build --platform linux/arm64 -t ${{ env.IMAGE_NAME }}:latest-arm64 .
+      - name: Build arm64 image
+        run: |
+          podman build --platform linux/arm64 \
+            -t ${{ env.IMAGE_NAME }}:latest-arm64 .
 
-    - name: Test amd64 image
-      run: |
-        mkdir -p test-output-amd64
-        podman run --rm \
-          -v $(pwd)/test-output-amd64:/app/output:Z \
-          ${{ env.IMAGE_NAME }}:latest-amd64 || echo "Test completed (some failures may be expected)"
+      - name: Test amd64 image
+        run: |
+          mkdir -p test-output-amd64
+          podman run --rm \
+            -v $(pwd)/test-output-amd64:/app/output:Z \
+            ${{ env.IMAGE_NAME }}:latest-amd64 || \
+            echo "Test completed (some failures may be expected)"
 
-    - name: Test arm64 image
-      run: |
-        mkdir -p test-output-arm64
-        podman run --rm \
-          -v $(pwd)/test-output-arm64:/app/output:Z \
-          ${{ env.IMAGE_NAME }}:latest-arm64 || echo "Test completed (some failures may be expected)"
+      - name: Test arm64 image
+        run: |
+          mkdir -p test-output-arm64
+          podman run --rm \
+            -v $(pwd)/test-output-arm64:/app/output:Z \
+            ${{ env.IMAGE_NAME }}:latest-arm64 || \
+            echo "Test completed (some failures may be expected)"
 
-    - name: Save amd64 image
-      run: |
-        podman save ${{ env.IMAGE_NAME }}:latest-amd64 -o image-amd64.tar
+      - name: Save amd64 image
+        run: |
+          podman save ${{ env.IMAGE_NAME }}:latest-amd64 -o image-amd64.tar
 
-    - name: Save arm64 image
-      run: |
-        podman save ${{ env.IMAGE_NAME }}:latest-arm64 -o image-arm64.tar
+      - name: Save arm64 image
+        run: |
+          podman save ${{ env.IMAGE_NAME }}:latest-arm64 -o image-arm64.tar
 
-    - name: Upload amd64 image artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: podman-image-amd64
-        path: image-amd64.tar
+      - name: Upload amd64 image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: podman-image-amd64
+          path: image-amd64.tar
 
-    - name: Upload arm64 image artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: podman-image-arm64
-        path: image-arm64.tar
+      - name: Upload arm64 image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: podman-image-arm64
+          path: image-arm64.tar
 
-    - name: Login to Quay.io
-      run: |
-        echo "${{ secrets.QUAY_PASSWORD }}" | podman login quay.io -u "${{ secrets.QUAY_USERNAME }}" --password-stdin
+      - name: Login to Quay.io
+        run: |
+          echo "${{ secrets.QUAY_PASSWORD }}" | \
+            podman login quay.io -u "${{ secrets.QUAY_USERNAME }}" \
+            --password-stdin
 
-    - name: Push multi-arch images to Quay.io
-      run: |
-        # Push individual architecture images
-        podman push ${{ env.IMAGE_NAME }}:latest-amd64
-        podman push ${{ env.IMAGE_NAME }}:latest-arm64
+      - name: Push multi-arch images to Quay.io
+        run: |
+          # Push individual architecture images
+          podman push ${{ env.IMAGE_NAME }}:latest-amd64
+          podman push ${{ env.IMAGE_NAME }}:latest-arm64

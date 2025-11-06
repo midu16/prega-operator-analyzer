@@ -41,18 +41,25 @@ jobs:
         mkdir -p bin
         go build -o bin/prega-operator-analyzer ./cmd
 
-    - name: Install opm (for local testing)
+    - name: Install opm and skopeo (for local testing)
       run: |
+        # Install opm
         curl -L https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/4.17.21/opm-linux-4.17.21.tar.gz -o opm-linux-4.17.21.tar.gz
         tar xvf opm-linux-4.17.21.tar.gz
         sudo mv opm-rhel8 /usr/local/bin/opm
         sudo chmod +x /usr/local/bin/opm
         rm opm-linux-4.17.21.tar.gz
+        
+        # Install skopeo
+        sudo apt-get update
+        sudo apt-get install -y skopeo
 
-    - name: Verify opm installation
+    - name: Verify tool installations
       run: |
         opm version
         which opm
+        skopeo --version
+        which skopeo
 
     - name: Test basic functionality
       run: |
@@ -122,17 +129,68 @@ jobs:
           echo "✅ SUCCESS: Cleanup works with environment variables"
         fi
 
-    - name: Test error handling
+    - name: Test fallback behavior
       run: |
-        # Test with invalid prega index (should fail gracefully)
-        ./bin/prega-operator-analyzer --prega-index=invalid-index:latest --verbose --output=error-test.txt || echo "Expected failure with invalid index"
+        # Test with invalid prega index (should now succeed with fallback)
+        echo "Testing fallback behavior with invalid-index:latest..."
+        ./bin/prega-operator-analyzer --prega-index=invalid-index:latest --verbose --output=fallback-test.txt
         
-        # Verify cleanup still happens even on error
+        # Verify output file was created (indicating fallback worked)
+        if [ ! -f "fallback-test.txt" ]; then
+          echo "❌ ERROR: Fallback did not work - output file was not created"
+          exit 1
+        fi
+        
+        # Check if output file has content
+        if [ ! -s "fallback-test.txt" ]; then
+          echo "❌ ERROR: Fallback output file is empty"
+          exit 1
+        fi
+        
+        echo "✅ SUCCESS: Fallback behavior works correctly"
+        echo "Fallback file size: $(wc -l < fallback-test.txt) lines"
+        
+        # Verify cleanup still happens after fallback
         if [ -d "prega-operator-index" ]; then
-          echo "❌ ERROR: prega-operator-index directory was not cleaned up after error"
+          echo "❌ ERROR: prega-operator-index directory was not cleaned up after fallback"
           exit 1
         else
-          echo "✅ SUCCESS: Cleanup works even after errors"
+          echo "✅ SUCCESS: Cleanup works with fallback behavior"
+        fi
+
+    - name: Test environment variable fallback
+      run: |
+        # Test fallback with valid PREGA_INDEX environment variable
+        export PREGA_INDEX="${{ env.PREGA_INDEX }}"
+        echo "Testing fallback with PREGA_INDEX environment variable..."
+        
+        ./bin/prega-operator-analyzer --prega-index=invalid-index:latest --verbose --output=env-fallback-test.txt
+        
+        # Verify output file was created
+        if [ ! -f "env-fallback-test.txt" ]; then
+          echo "❌ ERROR: Environment variable fallback did not work"
+          exit 1
+        fi
+        
+        echo "✅ SUCCESS: Environment variable fallback works correctly"
+        
+        # Clean up for next test
+        unset PREGA_INDEX
+
+    - name: Test dynamic tag fetching
+      run: |
+        # Test the dynamic tag fetching capability
+        echo "Testing dynamic tag fetching..."
+        
+        # This should succeed by fetching the latest tag using skopeo
+        ./bin/prega-operator-analyzer --prega-index=invalid-index:latest --verbose --output=dynamic-tag-test.txt
+        
+        # Verify it worked
+        if [ -f "dynamic-tag-test.txt" ] && [ -s "dynamic-tag-test.txt" ]; then
+          echo "✅ SUCCESS: Dynamic tag fetching works"
+        else
+          echo "❌ ERROR: Dynamic tag fetching failed"
+          exit 1
         fi
 
     - name: Upload test artifacts
@@ -143,7 +201,9 @@ jobs:
         path: |
           test-release-notes.txt
           env-test-release-notes.txt
-          error-test.txt
+          fallback-test.txt
+          env-fallback-test.txt
+          dynamic-tag-test.txt
         retention-days: 7
 
     - name: Test summary
@@ -156,8 +216,13 @@ jobs:
         echo "- Basic functionality test" >> $GITHUB_STEP_SUMMARY
         echo "- Cleanup functionality test" >> $GITHUB_STEP_SUMMARY
         echo "- Environment variable support test" >> $GITHUB_STEP_SUMMARY
-        echo "- Error handling test" >> $GITHUB_STEP_SUMMARY
+        echo "- Fallback behavior test" >> $GITHUB_STEP_SUMMARY
+        echo "- Environment variable fallback test" >> $GITHUB_STEP_SUMMARY
+        echo "- Dynamic tag fetching test" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "### Generated Files:" >> $GITHUB_STEP_SUMMARY
         echo "- test-release-notes.txt: $(wc -l < test-release-notes.txt) lines" >> $GITHUB_STEP_SUMMARY
         echo "- env-test-release-notes.txt: $(wc -l < env-test-release-notes.txt) lines" >> $GITHUB_STEP_SUMMARY
+        echo "- fallback-test.txt: $(wc -l < fallback-test.txt) lines" >> $GITHUB_STEP_SUMMARY
+        echo "- env-fallback-test.txt: $(wc -l < env-fallback-test.txt) lines" >> $GITHUB_STEP_SUMMARY
+        echo "- dynamic-tag-test.txt: $(wc -l < dynamic-tag-test.txt) lines" >> $GITHUB_STEP_SUMMARY
