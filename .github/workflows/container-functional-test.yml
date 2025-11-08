@@ -36,6 +36,7 @@ jobs:
         
         # Test with verbose output
         mkdir -p test-output
+        chmod 777 test-output
         podman run --rm \
           -v $(pwd)/test-output:/app/output:Z \
           -e PREGA_INDEX=${{ env.PREGA_INDEX }} \
@@ -62,6 +63,7 @@ jobs:
       run: |
         # Test that container cleans up internal directories
         mkdir -p test-output-cleanup
+        chmod 777 test-output-cleanup
         podman run --rm \
           -v $(pwd)/test-output-cleanup:/app/output:Z \
           -e PREGA_INDEX=${{ env.PREGA_INDEX }} \
@@ -77,6 +79,7 @@ jobs:
       run: |
         # Test opm functionality inside container
         mkdir -p test-output-opm
+        chmod 777 test-output-opm
         podman run --rm \
           -v $(pwd)/test-output-opm:/app/output:Z \
           ${{ env.IMAGE_NAME }}:test \
@@ -101,6 +104,7 @@ jobs:
       run: |
         # Test with invalid prega index (should fail gracefully)
         mkdir -p test-output-error
+        chmod 777 test-output-error
         podman run --rm \
           -v $(pwd)/test-output-error:/app/output:Z \
           -e PREGA_INDEX=invalid-index:latest \

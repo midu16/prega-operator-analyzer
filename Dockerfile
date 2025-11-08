@@ -63,6 +63,11 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 # Create a startup script that properly expands environment variables and ensures output directory is writable
 RUN echo '#!/bin/bash' > /app/start.sh && \
     echo '' >> /app/start.sh && \
+    echo '# If --help is requested or running specific commands that dont need output, skip permission checks' >> /app/start.sh && \
+    echo 'if [[ " $* " == *" --help "* ]] || [[ " $* " == *" -help "* ]] || [[ "$1" == "opm" ]] || [[ "$1" == "/bin/bash" ]] || [[ "$1" == "bash" ]] || [[ "$1" == "/bin/sh" ]] || [[ "$1" == "sh" ]]; then' >> /app/start.sh && \
+    echo '  exec "$@"' >> /app/start.sh && \
+    echo 'fi' >> /app/start.sh && \
+    echo '' >> /app/start.sh && \
     echo '# Ensure output directory exists and is writable' >> /app/start.sh && \
     echo 'mkdir -p /app/output 2>/dev/null || true' >> /app/start.sh && \
     echo 'touch /app/output/.test 2>/dev/null && rm -f /app/output/.test 2>/dev/null || {' >> /app/start.sh && \
