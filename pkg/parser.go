@@ -170,6 +170,33 @@ func ParseOperatorIndex(filePath string) ([]string, error) {
 		allEntries = []map[string]interface{}{entry}
 	}
 	
+	// Also try to parse as structured OperatorIndex if we have entries but no repositories yet
+	// This handles the case where a single structured JSON was successfully parsed as "NDJSON"
+	if len(repositories) == 0 && len(allEntries) > 0 {
+		var index OperatorIndex
+		if err := json.Unmarshal(content, &index); err == nil && len(index.Packages) > 0 {
+			// Extract repositories from structured format
+			for _, pkg := range index.Packages {
+				for _, channel := range pkg.Channels {
+					for _, entry := range channel.Entries {
+						for _, prop := range entry.Properties {
+							// Try to extract repository from property value
+							if valueMap, ok := prop.Value.(map[string]interface{}); ok {
+								if repo, exists := valueMap["repository"]; exists {
+									if repoStr, ok := repo.(string); ok {
+										if isValidRepositoryURL(repoStr) {
+											repositories[repoStr] = true
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	
 	// Extract repositories from all entries
 	for _, entry := range allEntries {
 		// Extract repository directly from entry if it exists
