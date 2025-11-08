@@ -26,7 +26,7 @@ FROM registry.access.redhat.com/ubi9/ubi:latest
 COPY --from=quay.io/operator-framework/opm:v1.48.0 /bin/opm /usr/local/bin/opm
 
 # Install additional dependencies using dnf (standard UBI uses dnf, not microdnf)
-RUN dnf install -y git ca-certificates tzdata bash curl tar shadow-utils && \
+RUN dnf install -y git ca-certificates tzdata bash shadow-utils && \
     dnf clean all
 
 # Create non-root user
@@ -52,7 +52,7 @@ EXPOSE 8080
 
 # Set environment variables
 ENV OUTPUT_DIR=/app/output
-ENV PREGA_INDEX=quay.io/prega/prega-operator-index:v4.21-20251025T205504
+ENV PREGA_INDEX=quay.io/prega/prega-operator-index:v4.21
 ENV OUTPUT_FILE=release-notes.txt
 ENV VERBOSE=true
 
