@@ -19,12 +19,15 @@ COPY . .
 # Build the application
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o prega-operator-analyzer ./cmd
 
-# Final stage - Use OPM base image
-FROM quay.io/operator-framework/opm:latest
+# Final stage - Use UBI9 standard (not minimal) which includes shell and basic tools
+FROM registry.access.redhat.com/ubi9/ubi:latest
 
-# Install additional dependencies
-RUN microdnf install -y git ca-certificates tzdata bash curl tar && \
-    microdnf clean all
+# Install OPM from the official image
+COPY --from=quay.io/operator-framework/opm:v1.48.0 /bin/opm /usr/local/bin/opm
+
+# Install additional dependencies using dnf (standard UBI uses dnf, not microdnf)
+RUN dnf install -y git ca-certificates tzdata bash curl tar shadow-utils && \
+    dnf clean all
 
 # Create non-root user
 RUN groupadd -g 1001 appgroup && \
