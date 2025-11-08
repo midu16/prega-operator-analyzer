@@ -44,7 +44,7 @@ jobs:
           # Fallback to hardcoded tag if no tags found or command fails
           if [ -z "$LATEST_TAG" ] || [ "$LATEST_TAG" = "null" ]; then
             echo "Warning: Could not fetch latest tag, using fallback"
-            LATEST_TAG="v4.21-20251025T205504"
+            LATEST_TAG="v4.21"
           fi
           
           PREGA_INDEX="quay.io/prega/prega-operator-index:${LATEST_TAG}"
