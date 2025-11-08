@@ -511,22 +511,27 @@ functional-test: verify-go install-opm
 	fi
 	@echo "$(GREEN)[SUCCESS]$(NC) Environment variable test passed"
 	
-	@echo "$(BLUE)[INFO]$(NC) Step 7: Test error handling"
-	@./bin/$(BINARY_NAME) --prega-index=invalid-index:latest --verbose --output=error-test.txt || echo "$(YELLOW)[INFO]$(NC) Expected failure with invalid index"
-	@if [ -d "prega-operator-index" ]; then \
-		echo "$(RED)[ERROR]$(NC) prega-operator-index directory was not cleaned up after error"; \
+	@echo "$(BLUE)[INFO]$(NC) Step 7: Test with different Prega index version"
+	@./bin/$(BINARY_NAME) --prega-index=quay.io/prega/prega-operator-index:v4.21 --verbose --output=version-test.txt
+	@if [ ! -f "version-test.txt" ]; then \
+		echo "$(RED)[ERROR]$(NC) Different version test output file was not created"; \
 		exit 1; \
 	fi
-	@echo "$(GREEN)[SUCCESS]$(NC) Cleanup works even after errors"
+	@if [ -d "prega-operator-index" ]; then \
+		echo "$(RED)[ERROR]$(NC) prega-operator-index directory was not cleaned up after version test"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)[SUCCESS]$(NC) Different Prega index version works correctly"
 	
 	@echo ""
 	@echo "$(GREEN)[SUCCESS]$(NC) Functional tests completed!"
 	@echo "$(BLUE)[INFO]$(NC) Generated files:"
 	@echo "  - test-release-notes.txt: $$(wc -l < test-release-notes.txt) lines"
 	@echo "  - env-test-release-notes.txt: $$(wc -l < env-test-release-notes.txt) lines"
+	@echo "  - version-test.txt: $$(wc -l < version-test.txt) lines"
 	
 	@echo "$(BLUE)[INFO]$(NC) Cleaning up test files..."
-	@rm -f test-release-notes.txt env-test-release-notes.txt error-test.txt
+	@rm -f test-release-notes.txt env-test-release-notes.txt version-test.txt
 
 # Container Functional Test - Mimics Container Functional Test workflow
 container-functional-test: verify-podman

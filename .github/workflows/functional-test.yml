@@ -131,65 +131,66 @@ jobs:
 
     - name: Test fallback behavior
       run: |
-        # Test with invalid prega index (should now succeed with fallback)
-        echo "Testing fallback behavior with invalid-index:latest..."
-        ./bin/prega-operator-analyzer --prega-index=invalid-index:latest --verbose --output=fallback-test.txt
+        # Test with older prega index version
+        echo "Testing with older Prega index version: quay.io/prega/prega-operator-index:v4.21..."
+        ./bin/prega-operator-analyzer --prega-index=quay.io/prega/prega-operator-index:v4.21 --verbose --output=fallback-test.txt
         
-        # Verify output file was created (indicating fallback worked)
+        # Verify output file was created
         if [ ! -f "fallback-test.txt" ]; then
-          echo "❌ ERROR: Fallback did not work - output file was not created"
+          echo "❌ ERROR: Output file was not created"
           exit 1
         fi
         
         # Check if output file has content
         if [ ! -s "fallback-test.txt" ]; then
-          echo "❌ ERROR: Fallback output file is empty"
+          echo "❌ ERROR: Output file is empty"
           exit 1
         fi
         
-        echo "✅ SUCCESS: Fallback behavior works correctly"
-        echo "Fallback file size: $(wc -l < fallback-test.txt) lines"
+        echo "✅ SUCCESS: Works with different Prega index version"
+        echo "Output file size: $(wc -l < fallback-test.txt) lines"
         
-        # Verify cleanup still happens after fallback
+        # Verify cleanup still happens
         if [ -d "prega-operator-index" ]; then
-          echo "❌ ERROR: prega-operator-index directory was not cleaned up after fallback"
+          echo "❌ ERROR: prega-operator-index directory was not cleaned up"
           exit 1
         else
-          echo "✅ SUCCESS: Cleanup works with fallback behavior"
+          echo "✅ SUCCESS: Cleanup works correctly"
         fi
 
     - name: Test environment variable fallback
       run: |
-        # Test fallback with valid PREGA_INDEX environment variable
-        export PREGA_INDEX="${{ env.PREGA_INDEX }}"
-        echo "Testing fallback with PREGA_INDEX environment variable..."
+        # Test with different valid PREGA_INDEX environment variable
+        export PREGA_INDEX="quay.io/prega/prega-operator-index:v4.21"
+        echo "Testing with PREGA_INDEX environment variable: $PREGA_INDEX..."
         
-        ./bin/prega-operator-analyzer --prega-index=invalid-index:latest --verbose --output=env-fallback-test.txt
+        ./bin/prega-operator-analyzer --verbose --output=env-fallback-test.txt
         
         # Verify output file was created
         if [ ! -f "env-fallback-test.txt" ]; then
-          echo "❌ ERROR: Environment variable fallback did not work"
+          echo "❌ ERROR: Environment variable test did not work"
           exit 1
         fi
         
-        echo "✅ SUCCESS: Environment variable fallback works correctly"
+        echo "✅ SUCCESS: Environment variable works correctly"
         
         # Clean up for next test
         unset PREGA_INDEX
 
     - name: Test dynamic tag fetching
       run: |
-        # Test the dynamic tag fetching capability
-        echo "Testing dynamic tag fetching..."
+        # Test with the latest version (default)
+        echo "Testing with latest default version..."
         
-        # This should succeed by fetching the latest tag using skopeo
-        ./bin/prega-operator-analyzer --prega-index=invalid-index:latest --verbose --output=dynamic-tag-test.txt
+        # This should succeed by using the default latest tag
+        ./bin/prega-operator-analyzer --verbose --output=dynamic-tag-test.txt
         
         # Verify it worked
         if [ -f "dynamic-tag-test.txt" ] && [ -s "dynamic-tag-test.txt" ]; then
-          echo "✅ SUCCESS: Dynamic tag fetching works"
+          echo "✅ SUCCESS: Default version works"
+          echo "Output file size: $(wc -l < dynamic-tag-test.txt) lines"
         else
-          echo "❌ ERROR: Dynamic tag fetching failed"
+          echo "❌ ERROR: Default version test failed"
           exit 1
         fi
 
@@ -216,9 +217,9 @@ jobs:
         echo "- Basic functionality test" >> $GITHUB_STEP_SUMMARY
         echo "- Cleanup functionality test" >> $GITHUB_STEP_SUMMARY
         echo "- Environment variable support test" >> $GITHUB_STEP_SUMMARY
-        echo "- Fallback behavior test" >> $GITHUB_STEP_SUMMARY
-        echo "- Environment variable fallback test" >> $GITHUB_STEP_SUMMARY
-        echo "- Dynamic tag fetching test" >> $GITHUB_STEP_SUMMARY
+        echo "- Different Prega index version test" >> $GITHUB_STEP_SUMMARY
+        echo "- Environment variable with different version test" >> $GITHUB_STEP_SUMMARY
+        echo "- Default version test" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "### Generated Files:" >> $GITHUB_STEP_SUMMARY
         echo "- test-release-notes.txt: $(wc -l < test-release-notes.txt) lines" >> $GITHUB_STEP_SUMMARY

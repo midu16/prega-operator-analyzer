@@ -97,6 +97,9 @@ func ParseOperatorIndex(filePath string) ([]string, error) {
 	lines := strings.Split(string(content), "\n")
 	ndjsonSuccess := true
 	
+	// Initialize repositories map
+	repositories := make(map[string]bool)
+	
 	// Parse JSON objects that may span multiple lines
 	currentJSON := ""
 	braceCount := 0
@@ -139,14 +142,33 @@ func ParseOperatorIndex(filePath string) ([]string, error) {
 				"file_size": len(content),
 			})
 		}
+		
+		// Extract repositories from structured format
+		for _, pkg := range index.Packages {
+			for _, channel := range pkg.Channels {
+				for _, entry := range channel.Entries {
+					for _, prop := range entry.Properties {
+						// Try to extract repository from property value
+						if valueMap, ok := prop.Value.(map[string]interface{}); ok {
+							if repo, exists := valueMap["repository"]; exists {
+								if repoStr, ok := repo.(string); ok {
+									if isValidRepositoryURL(repoStr) {
+										repositories[repoStr] = true
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		
 		// Convert to map for consistent processing
 		indexBytes, _ := json.Marshal(index)
 		var entry map[string]interface{}
 		json.Unmarshal(indexBytes, &entry)
 		allEntries = []map[string]interface{}{entry}
 	}
-
-	repositories := make(map[string]bool)
 	
 	// Extract repositories from all entries
 	for _, entry := range allEntries {
