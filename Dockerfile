@@ -2,7 +2,7 @@
 FROM golang:1.21-alpine AS builder
 
 # Install build dependencies
-RUN apk add --no-cache git ca-certificates tzdata
+RUN apl update && apk upgrade --no-cache && apk add --no-cache git ca-certificates tzdata
 
 # Set working directory
 WORKDIR /app
@@ -26,7 +26,7 @@ FROM registry.access.redhat.com/ubi9/ubi:latest
 COPY --from=quay.io/operator-framework/opm:v1.48.0 /bin/opm /usr/local/bin/opm
 
 # Install additional dependencies using dnf (standard UBI uses dnf, not microdnf)
-RUN dnf install -y git ca-certificates tzdata bash shadow-utils && \
+RUN dnf upgrade -y && dnf install -y git ca-certificates tzdata bash shadow-utils && \
     dnf clean all
 
 # Create non-root user
