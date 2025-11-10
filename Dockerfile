@@ -2,7 +2,7 @@
 FROM golang:1.21-alpine AS builder
 
 # Install build dependencies
-RUN apl update && apk upgrade --no-cache && apk add --no-cache git ca-certificates tzdata
+RUN apk update && apk upgrade --no-cache && apk add --no-cache git ca-certificates tzdata
 
 # Set working directory
 WORKDIR /app
