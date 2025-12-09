@@ -151,9 +151,6 @@ func (vtm *VibeToolsManager) generateReleaseNotes(repoURL string) (string, error
 		// No vibe-tools available, use basic release notes
 		return vtm.generateBasicReleaseNotes(repoPath, repoURL)
 	}
-
-	// This should not be reached due to the if-else logic above
-	return "", fmt.Errorf("unexpected code path reached")
 }
 
 // isVibeToolsAvailable checks if vibe-tools is available in PATH
@@ -294,13 +291,24 @@ func (vtm *VibeToolsManager) generateBasicReleaseNotes(repoPath, repoURL string)
 	commitIter.ForEach(func(c *object.Commit) error {
 		commitCount++
 		
-		// Count changes in this commit
-		stats, err := c.Stats()
-		if err == nil {
-			for _, stat := range stats {
-				totalChanges += stat.Addition + stat.Deletion
+		// Count changes in this commit with panic recovery
+		// Some commits with very large diffs can cause panics in the diff library
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					vtm.Logger.Warnf("Failed to calculate stats for commit %s (panic recovered): %v", c.Hash.String()[:8], r)
+				}
+			}()
+			
+			stats, err := c.Stats()
+			if err == nil {
+				for _, stat := range stats {
+					totalChanges += stat.Addition + stat.Deletion
+				}
+			} else {
+				vtm.Logger.Debugf("Failed to get stats for commit %s: %v", c.Hash.String()[:8], err)
 			}
-		}
+		}()
 		
 		// Track author activity
 		authorStats[c.Author.Name]++
