@@ -17,7 +17,7 @@ echo "=== Method 2: Override environment variables ==="
 mkdir -p ./output-custom
 podman run --rm \
   -v $(pwd)/output-custom:/app/output:Z \
-  -e PREGA_INDEX=quay.io/prega/prega-operator-index:v4.21-20251025T205504 \
+  -e PREGA_INDEX=quay.io/prega/prega-operator-index:v4.21 \
   -e OUTPUT_FILE=custom-release-notes.txt \
   -e VERBOSE=true \
   quay.io/midu/prega-operator-analyzer:latest
@@ -28,7 +28,7 @@ mkdir -p ./output-opm
 podman run --rm \
   -v $(pwd)/output-opm:/app/output:Z \
   quay.io/midu/prega-operator-analyzer:latest \
-  opm render quay.io/prega/prega-operator-index:v4.21-20251025T205504 --output=json > ./output-opm/index.json
+  opm render quay.io/prega/prega-operator-index:v4.21 --output=json > ./output-opm/index.json
 
 # Method 4: Check opm version and capabilities
 echo "=== Method 4: Check opm version ==="
@@ -46,16 +46,16 @@ echo "  /bin/bash"
 echo ""
 echo "Then inside the container, you can run:"
 echo "opm version"
-echo "opm render quay.io/prega/prega-operator-index:v4.21-20251025T205504 --output=json"
+echo "opm render quay.io/prega/prega-operator-index:v4.21 --output=json"
 
 # Method 6: Override command line arguments (if needed)
 echo "=== Method 6: Override command line arguments ==="
 mkdir -p ./output-override
 podman run --rm \
   -v $(pwd)/output-override:/app/output:Z \
-  -e PREGA_INDEX=quay.io/prega/prega-operator-index:v4.21-20251025T205504 \
+  -e PREGA_INDEX=quay.io/prega/prega-operator-index:v4.21 \
   quay.io/midu/prega-operator-analyzer:latest \
-  --prega-index=quay.io/prega/prega-operator-index:v4.21-20251025T205504 \
+  --prega-index=quay.io/prega/prega-operator-index:v4.21 \
   --output=/app/output/override-release-notes.txt \
   --verbose
 

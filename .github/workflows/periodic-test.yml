@@ -9,11 +9,11 @@ on:
       prega_index:
         description: 'Prega Index to test with'
         required: false
-        default: 'quay.io/prega/prega-operator-index:v4.21-20251025T205504'
+        default: 'quay.io/prega/prega-operator-index:v4.21'
 
 env:
   IMAGE_NAME: quay.io/midu/prega-operator-analyzer
-  DEFAULT_PREGA_INDEX: quay.io/prega/prega-operator-index:v4.21-20251025T205504
+  DEFAULT_PREGA_INDEX: quay.io/prega/prega-operator-index:v4.21
 
 jobs:
   periodic-test:
