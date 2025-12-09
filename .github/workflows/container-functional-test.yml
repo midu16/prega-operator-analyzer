@@ -39,7 +39,7 @@ jobs:
         chmod 777 test-output
         podman run --rm \
           -v $(pwd)/test-output:/app/output:Z \
-          -v $(pwd)/testdata:/app/testdata:ro:Z \
+          -v $(pwd)/testdata:/app/testdata:ro,Z \
           -e OUTPUT_FILE=container-test-release-notes.txt \
           -e VERBOSE=true \
           ${{ env.IMAGE_NAME }}:test \
@@ -67,7 +67,7 @@ jobs:
         chmod 777 test-output-cleanup
         podman run --rm \
           -v $(pwd)/test-output-cleanup:/app/output:Z \
-          -v $(pwd)/testdata:/app/testdata:ro:Z \
+          -v $(pwd)/testdata:/app/testdata:ro,Z \
           -e OUTPUT_FILE=cleanup-test.txt \
           ${{ env.IMAGE_NAME }}:test \
           --index-file=/app/testdata/sample_index.json --output=/app/output/cleanup-test.txt

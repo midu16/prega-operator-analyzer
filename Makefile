@@ -550,7 +550,7 @@ container-functional-test: verify-podman
 	@chmod 777 test-output
 	@podman run --rm \
 		-v $(PWD)/test-output:/app/output:Z \
-		-v $(PWD)/testdata:/app/testdata:ro:Z \
+		-v $(PWD)/testdata:/app/testdata:ro,Z \
 		-e OUTPUT_FILE=container-test-release-notes.txt \
 		-e VERBOSE=true \
 		$(PODMAN_IMAGE):test \
