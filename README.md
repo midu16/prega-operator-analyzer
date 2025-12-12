@@ -297,21 +297,125 @@ make podman-test-only
 make podman-no-test
 ```
 
-#### Using Environment Variables
-```bash
-# Build and push with latest tag
-make podman-all
-
-# Build and push with custom tag
-TAG=v1.0.0 make podman-all-tag
-
-# Build image only (don't push)
-make podman-build-only
-
-# Run tests only
-make podman-test-only
-
 # Build and push without running tests
 make podman-no-test
 ```
 
+## Contributing
+
+We welcome contributions from the community! Please read our [CONTRIBUTING.md](CONTRIBUTING.md) guide to learn how to:
+
+- Report bugs and issues
+- Suggest new features
+- Submit pull requests
+- Follow our coding standards
+- Run tests locally
+
+### Quick Start for Contributors
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/your-feature`
+3. Make your changes and add tests
+4. Run all tests: `make test-all`
+5. Commit with conventional commits: `git commit -m "feat: add new feature"`
+6. Push and create a Pull Request
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
+
+## Reporting Issues
+
+Found a bug or have a feature request? We'd love to hear from you!
+
+### Bug Reports
+
+When reporting bugs, please include:
+
+1. **Clear title**: Summarize the issue
+2. **Environment details**:
+   - Go version: `go version`
+   - OS and version
+   - Container runtime (if applicable)
+   - Prega Operator Analyzer version
+3. **Steps to reproduce**: Detailed steps to recreate the issue
+4. **Expected behavior**: What you expected to happen
+5. **Actual behavior**: What actually happened
+6. **Logs and screenshots**: Any relevant output or error messages
+
+**Create an issue**: [GitHub Issues](https://github.com/OWNER/prega-operator-analyzer/issues/new)
+
+### Feature Requests
+
+We welcome ideas for improvements! When suggesting features:
+
+1. **Check existing issues** first to avoid duplicates
+2. **Explain the problem** this feature would solve
+3. **Describe the solution** you envision
+4. **Provide use cases** and examples
+5. **Consider alternatives** you've thought about
+
+### Issue Labels
+
+We use labels to organize issues:
+
+- `bug`: Something isn't working
+- `enhancement`: New feature or request
+- `documentation`: Improvements or additions to documentation
+- `good first issue`: Good for newcomers
+- `help wanted`: Extra attention needed
+- `question`: Further information requested
+- `priority:high`: High priority issues
+
+## License
+
+This project is licensed under the **Apache License 2.0** - see the [LICENSE](LICENSE) file for full details.
+
+### What This Means
+
+- ✅ **Commercial use**: You can use this software for commercial purposes
+- ✅ **Modification**: You can modify the software
+- ✅ **Distribution**: You can distribute the software
+- ✅ **Patent use**: You receive an express grant of patent rights
+- ✅ **Private use**: You can use the software privately
+- ⚠️ **Trademark use**: This license explicitly states it does NOT grant trademark rights
+- ⚠️ **Liability**: The software comes with no warranty or liability
+- ⚠️ **Attribution**: You must include the license and copyright notice
+
+### Third-Party Licenses
+
+This project uses the following open-source dependencies:
+
+- **Go Standard Library**: BSD 3-Clause License
+- **logrus** (github.com/sirupsen/logrus): MIT License
+- **go-git** (github.com/go-git/go-git): Apache 2.0 License
+- **Operator Framework OPM**: Apache 2.0 License
+
+See `go.mod` for a complete list of dependencies.
+
+## Support
+
+### Documentation
+
+- **README**: This file - overview and usage
+- **CONTRIBUTING**: [CONTRIBUTING.md](CONTRIBUTING.md) - contribution guidelines
+- **Makefile**: Run `make help` for available commands
+- **Inline help**: Run `./prega-operator-analyzer --help`
+
+### Community
+
+- **GitHub Issues**: Bug reports and feature requests
+- **GitHub Discussions**: Questions and general discussion
+- **Pull Requests**: Code contributions
+
+### Maintainers
+
+This project is maintained by the Prega Operator Analyzer team. For security issues, please see our security policy.
+
+## Acknowledgments
+
+- Red Hat and the Operator Framework for the OPM tool
+- The Go community for excellent libraries and tools
+- All contributors who have helped improve this project
+
+## Changelog
+
+See [GitHub Releases](https://github.com/OWNER/prega-operator-analyzer/releases) for version history and release notes.
