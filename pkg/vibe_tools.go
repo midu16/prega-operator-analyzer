@@ -15,18 +15,23 @@ import (
 
 // VibeToolsManager handles vibe-tools operations
 type VibeToolsManager struct {
-	WorkDir      string
-	OutputFile   string
-	Logger       *logrus.Logger
-	ErrorHandler *ErrorHandler
-	Formatter    *ReleaseNoteFormatter
+	WorkDir        string
+	OutputFile     string
+	Logger         *logrus.Logger
+	ErrorHandler   *ErrorHandler
+	Formatter      *ReleaseNoteFormatter
 	UseCursorAgent bool
+	GenerateHTML   bool
+	HTMLOutputFile string
 }
 
 // NewVibeToolsManager creates a new VibeToolsManager
 func NewVibeToolsManager(workDir, outputFile string, useCursorAgent bool) *VibeToolsManager {
 	logger := logrus.New()
 	logger.SetLevel(logrus.InfoLevel)
+	
+	// Generate HTML file path from text output file
+	htmlOutputFile := strings.TrimSuffix(outputFile, ".txt") + ".html"
 	
 	return &VibeToolsManager{
 		WorkDir:        workDir,
@@ -35,6 +40,8 @@ func NewVibeToolsManager(workDir, outputFile string, useCursorAgent bool) *VibeT
 		ErrorHandler:   NewErrorHandler(3, logger), // 3 retries by default
 		Formatter:      NewReleaseNoteFormatter(),
 		UseCursorAgent: useCursorAgent,
+		GenerateHTML:   true,
+		HTMLOutputFile: htmlOutputFile,
 	}
 }
 
@@ -53,6 +60,23 @@ func (vtm *VibeToolsManager) ProcessRepositories(repositories []string) error {
 		}
 	}()
 
+	// Create HTML output file if enabled
+	var htmlFile *os.File
+	if vtm.GenerateHTML {
+		htmlFile, err = os.Create(vtm.HTMLOutputFile)
+		if err != nil {
+			vtm.Logger.Warnf("Failed to create HTML output file: %v", err)
+		} else {
+			defer func() {
+				if closeErr := htmlFile.Close(); closeErr != nil {
+					vtm.Logger.Errorf("Failed to close HTML file: %v", closeErr)
+				}
+			}()
+			// Write HTML header
+			htmlFile.WriteString(vtm.generateHTMLHeader())
+		}
+	}
+
 	// Write header
 	header := fmt.Sprintf("Release Notes Generated on: %s\n", time.Now().Format("2006-01-02 15:04:05"))
 	header += "=" + strings.Repeat("=", len(header)-1) + "\n\n"
@@ -64,6 +88,7 @@ func (vtm *VibeToolsManager) ProcessRepositories(repositories []string) error {
 
 	successCount := 0
 	errorCount := 0
+	var htmlContent strings.Builder
 
 	for i, repo := range repositories {
 		vtm.Logger.Infof("Processing repository %d/%d: %s", i+1, len(repositories), repo)
@@ -94,6 +119,11 @@ func (vtm *VibeToolsManager) ProcessRepositories(repositories []string) error {
 			if _, writeErr := outputFile.WriteString(errorSection); writeErr != nil {
 				vtm.Logger.Errorf("Failed to write error section: %v", writeErr)
 			}
+			
+			// Add error to HTML
+			if vtm.GenerateHTML {
+				htmlContent.WriteString(vtm.formatHTMLErrorSection(repo, err))
+			}
 		} else {
 			successCount++
 		}
@@ -109,6 +139,14 @@ func (vtm *VibeToolsManager) ProcessRepositories(repositories []string) error {
 	
 	if _, err := outputFile.WriteString(summary); err != nil {
 		vtm.Logger.Errorf("Failed to write summary: %v", err)
+	}
+
+	// Write HTML footer and close
+	if vtm.GenerateHTML && htmlFile != nil {
+		htmlFile.WriteString(htmlContent.String())
+		htmlFile.WriteString(vtm.generateHTMLSummary(len(repositories), successCount, errorCount))
+		htmlFile.WriteString(vtm.generateHTMLFooter())
+		vtm.Logger.Infof("HTML release notes saved to: %s", vtm.HTMLOutputFile)
 	}
 
 	vtm.Logger.Infof("Release notes saved to: %s (Success: %d, Failed: %d)", vtm.OutputFile, successCount, errorCount)
@@ -395,4 +433,242 @@ func (vtm *VibeToolsManager) extractRepoName(repoURL string) string {
 	}
 	
 	return "unknown-repo"
+}
+
+// generateHTMLHeader generates the HTML document header
+func (vtm *VibeToolsManager) generateHTMLHeader() string {
+	return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prega Operator Release Notes</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0a0a0f;
+            --bg-secondary: #12121a;
+            --bg-tertiary: #1a1a24;
+            --bg-card: #16161f;
+            --accent-primary: #ff6b35;
+            --accent-secondary: #f7c859;
+            --accent-tertiary: #00d4aa;
+            --accent-blue: #5b8def;
+            --text-primary: #f5f5f7;
+            --text-secondary: #a0a0b0;
+            --text-muted: #6b6b7b;
+            --border-color: #2a2a3a;
+            --success: #00d4aa;
+            --warning: #f7c859;
+            --error: #ff5555;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Outfit', sans-serif;
+            background: radial-gradient(ellipse at top, #1a1a2e 0%, #0a0a0f 50%);
+            color: var(--text-primary);
+            min-height: 100vh;
+            padding: 40px;
+            line-height: 1.6;
+        }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .header {
+            text-align: center;
+            margin-bottom: 48px;
+            padding-bottom: 32px;
+            border-bottom: 1px solid var(--border-color);
+        }
+        .header h1 {
+            font-size: 36px;
+            font-weight: 700;
+            background: linear-gradient(135deg, #ff6b35 0%, #f7c859 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 8px;
+        }
+        .header p { color: var(--text-secondary); font-size: 16px; }
+        .repo-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            margin-bottom: 24px;
+            overflow: hidden;
+        }
+        .repo-header {
+            background: var(--bg-tertiary);
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--border-color);
+        }
+        .repo-header h2 {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        .repo-url {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+        .repo-body { padding: 24px; }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        .stat-card {
+            background: var(--bg-tertiary);
+            padding: 20px;
+            border-radius: 12px;
+            text-align: center;
+        }
+        .stat-value {
+            display: block;
+            font-size: 28px;
+            font-weight: 700;
+            color: var(--accent-primary);
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .stat-label {
+            font-size: 12px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+        }
+        .section { margin-bottom: 24px; }
+        .section h3 {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 12px;
+        }
+        .commit-list { display: grid; gap: 8px; }
+        .commit-item {
+            padding: 12px 16px;
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+        }
+        .commit-hash {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--accent-blue);
+            background: var(--bg-secondary);
+            padding: 2px 6px;
+            border-radius: 4px;
+            margin-right: 8px;
+        }
+        .commit-message { font-weight: 500; }
+        .commit-meta {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 6px;
+        }
+        .contributor {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 14px;
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            margin-bottom: 6px;
+        }
+        .contributor .rank {
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--accent-secondary);
+            min-width: 24px;
+        }
+        .contributor .name { flex: 1; font-weight: 500; }
+        .contributor .count { color: var(--text-muted); font-size: 13px; }
+        .error-card {
+            background: rgba(255, 85, 85, 0.1);
+            border-color: var(--error);
+        }
+        .error-card .repo-header { background: rgba(255, 85, 85, 0.15); }
+        .summary-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 32px;
+            text-align: center;
+            margin-top: 40px;
+        }
+        .summary-card h2 { font-size: 24px; margin-bottom: 24px; }
+        .footer {
+            text-align: center;
+            margin-top: 40px;
+            padding-top: 24px;
+            border-top: 1px solid var(--border-color);
+            color: var(--text-muted);
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔍 Prega Operator Release Notes</h1>
+            <p>Generated on ` + time.Now().Format("January 02, 2006 at 15:04:05") + `</p>
+        </div>
+`
+}
+
+// generateHTMLFooter generates the HTML document footer
+func (vtm *VibeToolsManager) generateHTMLFooter() string {
+	return `
+        <div class="footer">
+            <p>Generated by Prega Operator Analyzer</p>
+        </div>
+    </div>
+</body>
+</html>
+`
+}
+
+// generateHTMLSummary generates an HTML summary section
+func (vtm *VibeToolsManager) generateHTMLSummary(total, success, failed int) string {
+	successRate := float64(success) / float64(total) * 100
+	return fmt.Sprintf(`
+        <div class="summary-card">
+            <h2>📊 Processing Summary</h2>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <span class="stat-value">%d</span>
+                    <span class="stat-label">Total Repositories</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-value" style="color: var(--success)">%d</span>
+                    <span class="stat-label">Successful</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-value" style="color: var(--error)">%d</span>
+                    <span class="stat-label">Failed</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-value">%.1f%%</span>
+                    <span class="stat-label">Success Rate</span>
+                </div>
+            </div>
+        </div>
+`, total, success, failed, successRate)
+}
+
+// formatHTMLErrorSection formats an error section in HTML
+func (vtm *VibeToolsManager) formatHTMLErrorSection(repoURL string, err error) string {
+	repoName := vtm.extractRepoName(repoURL)
+	return fmt.Sprintf(`
+        <div class="repo-card error-card">
+            <div class="repo-header">
+                <h2>❌ %s</h2>
+                <div class="repo-url">%s</div>
+            </div>
+            <div class="repo-body">
+                <div class="section">
+                    <h3>Error Details</h3>
+                    <p style="color: var(--error);">%v</p>
+                    <p style="color: var(--text-muted); margin-top: 8px;">
+                        This repository could not be processed. Please check the repository URL and network connectivity.
+                    </p>
+                </div>
+            </div>
+        </div>
+`, repoName, repoURL, err)
 }

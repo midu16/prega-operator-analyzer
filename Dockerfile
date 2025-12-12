@@ -47,7 +47,7 @@ RUN mkdir -p /app/output && \
 # Switch to non-root user
 USER appuser
 
-# Expose port (if needed for health checks)
+# Expose port for web server mode
 EXPOSE 8080
 
 # Set environment variables
@@ -55,8 +55,10 @@ ENV OUTPUT_DIR=/app/output
 ENV PREGA_INDEX=quay.io/prega/prega-operator-index:v4.21
 ENV OUTPUT_FILE=release-notes.txt
 ENV VERBOSE=true
+ENV SERVER_MODE=false
+ENV SERVER_PORT=8080
 
-# Health check
+# Health check - works for both CLI and server modes
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD ["./prega-operator-analyzer", "--help"] || exit 1
 
@@ -77,11 +79,16 @@ RUN echo '#!/bin/bash' > /app/start.sh && \
     echo '}' >> /app/start.sh && \
     echo '' >> /app/start.sh && \
     echo '# If arguments are provided, pass them to the application' >> /app/start.sh && \
-    echo '# Otherwise, use default environment variable configuration' >> /app/start.sh && \
     echo 'if [ $# -gt 0 ]; then' >> /app/start.sh && \
     echo '  exec ./prega-operator-analyzer "$@"' >> /app/start.sh && \
     echo 'else' >> /app/start.sh && \
-    echo '  exec ./prega-operator-analyzer --prega-index="${PREGA_INDEX}" --output="/app/output/${OUTPUT_FILE}" --verbose' >> /app/start.sh && \
+    echo '  # Check if SERVER_MODE is enabled' >> /app/start.sh && \
+    echo '  if [ "${SERVER_MODE}" = "true" ]; then' >> /app/start.sh && \
+    echo '    echo "Starting in Web Server Mode on port ${SERVER_PORT}..."' >> /app/start.sh && \
+    echo '    exec ./prega-operator-analyzer --server --port="${SERVER_PORT}" --prega-index="${PREGA_INDEX}" --verbose' >> /app/start.sh && \
+    echo '  else' >> /app/start.sh && \
+    echo '    exec ./prega-operator-analyzer --prega-index="${PREGA_INDEX}" --output="/app/output/${OUTPUT_FILE}" --verbose' >> /app/start.sh && \
+    echo '  fi' >> /app/start.sh && \
     echo 'fi' >> /app/start.sh && \
     chmod +x /app/start.sh
 

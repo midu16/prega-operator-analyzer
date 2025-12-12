@@ -6,6 +6,8 @@
 *.dylib
 bin/
 dist/
+prega-operator-analyzer
+prega-operator-analyzer.service
 
 # Test binary, built with `go test -c`
 *.test
