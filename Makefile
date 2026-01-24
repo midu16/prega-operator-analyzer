@@ -25,7 +25,7 @@ help:
 	@echo ""
 	@echo "$(BLUE)Basic Targets:$(NC)"
 	@echo "  build          - Build the binary"
-	@echo "  run            - Run the application"
+	@echo "  run            - Run the application in server mode (web UI)"
 	@echo "  clean          - Clean build artifacts"
 	@echo "  test           - Run tests"
 	@echo "  deps           - Download dependencies"
@@ -72,8 +72,8 @@ build:
 
 # Run the application
 run:
-	@echo "Running $(BINARY_NAME)..."
-	@go run $(MAIN_PACKAGE)
+	@echo "Running $(BINARY_NAME) in server mode..."
+	@go run $(MAIN_PACKAGE) --server
 
 # Clean build artifacts
 clean:

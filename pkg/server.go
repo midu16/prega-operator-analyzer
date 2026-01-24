@@ -96,6 +96,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/branches", s.handleBranches)
 	mux.HandleFunc("/api/release-notes", s.handleReleaseNotes)
 	mux.HandleFunc("/api/refresh", s.handleRefresh)
+	mux.HandleFunc("/api/commit-summary", s.handleCommitSummary)
 
 	s.Logger.Infof("Starting web server on port %d", s.Port)
 	s.Logger.Infof("Access the web interface at: http://localhost:%d", s.Port)
@@ -681,24 +682,31 @@ func (s *Server) generateHTMLReleaseNotes(
 			c := commits[i]
 			commitURL := fmt.Sprintf("%s/commit/%s", commitURLBase, c.Hash)
 			html.WriteString(fmt.Sprintf(`
-				<a href="%s" target="_blank" class="commit-item-link">
-					<div class="commit-item">
-						<div class="commit-header">
-							<code class="commit-hash">%s</code>
-							<span class="commit-link-icon">🔗</span>
+				<div class="commit-item-wrapper">
+					<a href="%s" target="_blank" class="commit-item-link">
+						<div class="commit-item" data-commit-hash="%s">
+							<div class="commit-header">
+								<code class="commit-hash">%s</code>
+								<span class="commit-link-icon">🔗</span>
+							</div>
+							<span class="commit-message">%s</span>
+							<div class="commit-meta">
+								<span class="author">👤 %s</span>
+								<span class="date">📅 %s</span>
+							</div>
 						</div>
-						<span class="commit-message">%s</span>
-						<div class="commit-meta">
-							<span class="author">👤 %s</span>
-							<span class="date">📅 %s</span>
-						</div>
-					</div>
-				</a>`,
+					</a>
+					<button class="commit-summary-btn" data-commit-hash="%s" title="View AI Summary">
+						<span>🤖</span>
+					</button>
+				</div>`,
 				commitURL,
+				c.Hash,
 				c.Hash,
 				template.HTMLEscapeString(c.Message),
 				template.HTMLEscapeString(c.Author),
 				c.Date.Format("Jan 02, 15:04"),
+				c.Hash,
 			))
 		}
 	}
@@ -713,11 +721,13 @@ func (s *Server) generateIndexJSON(outputPath string) error {
 	dir := filepath.Dir(outputPath)
 	os.MkdirAll(dir, 0755)
 
-	opmPath, err := exec.LookPath("opm")
+	// Find or download opm
+	dm := NewDependencyManager(".bin", s.Logger)
+	opmPath, err := dm.FindOrDownloadTool("opm")
 	if err != nil {
-		return fmt.Errorf("opm command not found: %w", err)
+		return fmt.Errorf("opm command not found and could not be downloaded: %w", err)
 	}
-	s.Logger.Debugf("Found opm at: %s", opmPath)
+	s.Logger.Debugf("Using opm at: %s", opmPath)
 
 	outputFile, err := os.Create(outputPath)
 	if err != nil {
@@ -725,7 +735,7 @@ func (s *Server) generateIndexJSON(outputPath string) error {
 	}
 	defer outputFile.Close()
 
-	cmd := exec.Command("opm", "render", s.PregaIndex, "--output=json")
+	cmd := exec.Command(opmPath, "render", s.PregaIndex, "--output=json")
 	cmd.Stdout = outputFile
 	cmd.Stderr = os.Stderr
 
@@ -734,6 +744,268 @@ func (s *Server) generateIndexJSON(outputPath string) error {
 	}
 
 	return nil
+}
+
+// CommitSummaryRequest represents a request for commit summary
+type CommitSummaryRequest struct {
+	Repository string `json:"repository"`
+	Branch     string `json:"branch"`
+	CommitHash string `json:"commitHash"`
+}
+
+// CommitSummaryResponse represents the response with commit summary
+type CommitSummaryResponse struct {
+	Success      bool   `json:"success"`
+	Summary      string `json:"summary"`
+	CommitHash   string `json:"commitHash"`
+	CommitMessage string `json:"commitMessage"`
+	Author       string `json:"author"`
+	Date         string `json:"date"`
+	FilesChanged int    `json:"filesChanged"`
+	LinesAdded   int    `json:"linesAdded"`
+	LinesDeleted int    `json:"linesDeleted"`
+	ErrorMessage string `json:"errorMessage,omitempty"`
+}
+
+// handleCommitSummary generates an AI summary of a commit's changes
+func (s *Server) handleCommitSummary(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodPost {
+		json.NewEncoder(w).Encode(CommitSummaryResponse{
+			Success:      false,
+			ErrorMessage: "POST method required",
+		})
+		return
+	}
+
+	var req CommitSummaryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		json.NewEncoder(w).Encode(CommitSummaryResponse{
+			Success:      false,
+			ErrorMessage: "Invalid request body: " + err.Error(),
+		})
+		return
+	}
+
+	// Validate request
+	if req.Repository == "" || req.CommitHash == "" {
+		json.NewEncoder(w).Encode(CommitSummaryResponse{
+			Success:      false,
+			ErrorMessage: "repository and commitHash are required",
+		})
+		return
+	}
+
+	// Generate commit summary
+	summary, commitDetailedInfo, err := s.generateCommitSummary(req.Repository, req.Branch, req.CommitHash)
+	if err != nil {
+		json.NewEncoder(w).Encode(CommitSummaryResponse{
+			Success:      false,
+			CommitHash:   req.CommitHash,
+			ErrorMessage: err.Error(),
+		})
+		return
+	}
+
+	json.NewEncoder(w).Encode(CommitSummaryResponse{
+		Success:       true,
+		Summary:       summary,
+		CommitHash:    commitDetailedInfo.Hash,
+		CommitMessage: commitDetailedInfo.Message,
+		Author:        commitDetailedInfo.Author,
+		Date:          commitDetailedInfo.Date.Format("2006-01-02 15:04:05"),
+		FilesChanged:  commitDetailedInfo.FilesChanged,
+		LinesAdded:    commitDetailedInfo.LinesAdded,
+		LinesDeleted:  commitDetailedInfo.LinesDeleted,
+	})
+}
+
+// CommitDetailedInfo holds detailed commit information with stats
+type CommitDetailedInfo struct {
+	Hash         string
+	Message      string
+	Author       string
+	Date         time.Time
+	FilesChanged int
+	LinesAdded   int
+	LinesDeleted int
+}
+
+// generateCommitSummary generates an AI summary of commit changes
+func (s *Server) generateCommitSummary(repoURL, branch, commitHash string) (string, CommitDetailedInfo, error) {
+	repoName := extractRepoNameFromURL(repoURL)
+	repoPath := filepath.Join(s.WorkDir, "commit-analysis", repoName)
+	
+	// Remove existing and clone fresh
+	os.RemoveAll(repoPath)
+	os.MkdirAll(filepath.Dir(repoPath), 0755)
+
+	s.Logger.Infof("Cloning %s (branch: %s) for commit analysis...", repoURL, branch)
+
+	// Clone repository
+	_, err := git.PlainClone(repoPath, false, &git.CloneOptions{
+		URL:           repoURL,
+		ReferenceName: plumbing.NewBranchReferenceName(branch),
+		SingleBranch:  true,
+	})
+	if err != nil {
+		// Try with origin/branch reference
+	_, err = git.PlainClone(repoPath, false, &git.CloneOptions{
+		URL:           repoURL,
+		ReferenceName: plumbing.NewRemoteReferenceName("origin", branch),
+		SingleBranch:  true,
+	})
+	if err != nil {
+		return "", CommitDetailedInfo{}, fmt.Errorf("failed to clone branch %s: %w", branch, err)
+	}
+	}
+	defer os.RemoveAll(repoPath)
+
+	// Open repo
+	repo, err := git.PlainOpen(repoPath)
+	if err != nil {
+		return "", CommitDetailedInfo{}, fmt.Errorf("failed to open repository: %w", err)
+	}
+
+	// Find commit by hash (support both full and short hash)
+	var commit *object.Commit
+	commitIter, err := repo.Log(&git.LogOptions{})
+	if err != nil {
+		return "", CommitDetailedInfo{}, fmt.Errorf("failed to get commit log: %w", err)
+	}
+
+	err = commitIter.ForEach(func(c *object.Commit) error {
+		if strings.HasPrefix(c.Hash.String(), commitHash) || c.Hash.String()[:8] == commitHash {
+			commit = c
+			return fmt.Errorf("found") // Break the loop
+		}
+		return nil
+	})
+	if commit == nil {
+		return "", CommitDetailedInfo{}, fmt.Errorf("commit %s not found", commitHash)
+	}
+
+	// Get commit stats
+	stats, err := commit.Stats()
+	if err != nil {
+		s.Logger.Warnf("Failed to get commit stats: %v", err)
+		stats = nil
+	}
+
+	var filesChanged, linesAdded, linesDeleted int
+	if stats != nil {
+		filesChanged = len(stats)
+		for _, stat := range stats {
+			linesAdded += stat.Addition
+			linesDeleted += stat.Deletion
+		}
+	}
+
+	commitDetailedInfo := CommitDetailedInfo{
+		Hash:         commit.Hash.String()[:8],
+		Message:      strings.Split(strings.TrimSpace(commit.Message), "\n")[0],
+		Author:       commit.Author.Name,
+		Date:         commit.Author.When,
+		FilesChanged: filesChanged,
+		LinesAdded:   linesAdded,
+		LinesDeleted: linesDeleted,
+	}
+
+	// Get parent commit for diff
+	var parentCommit *object.Commit
+	if commit.NumParents() > 0 {
+		parentCommit, err = commit.Parent(0)
+		if err != nil {
+			s.Logger.Warnf("Failed to get parent commit: %v", err)
+		}
+	}
+
+	// Generate diff summary
+	var diffSummary strings.Builder
+	if parentCommit != nil {
+		patch, err := parentCommit.Patch(commit)
+		if err == nil {
+			diffSummary.WriteString("## Changes Summary\n\n")
+			
+			// Analyze file changes
+			for _, fileStat := range stats {
+				diffSummary.WriteString(fmt.Sprintf("- **%s**: %d additions, %d deletions\n", 
+					fileStat.Name, fileStat.Addition, fileStat.Deletion))
+			}
+			
+			// Get patch stats
+			filePatches := patch.FilePatches()
+			if len(filePatches) > 0 {
+				diffSummary.WriteString("\n### Modified Files:\n\n")
+				for _, filePatch := range filePatches {
+					from, to := filePatch.Files()
+					if from != nil && to != nil {
+						diffSummary.WriteString(fmt.Sprintf("- `%s` → `%s`\n", from.Path(), to.Path()))
+					} else if from != nil {
+						diffSummary.WriteString(fmt.Sprintf("- `%s` (deleted)\n", from.Path()))
+					} else if to != nil {
+						diffSummary.WriteString(fmt.Sprintf("- `%s` (added)\n", to.Path()))
+					}
+				}
+			}
+		}
+	}
+
+	// Try to use cursor-agent for AI summary if available
+	summary := s.generateAISummary(commit, diffSummary.String(), repoPath)
+	if summary == "" {
+		// Fallback to basic summary
+		summary = diffSummary.String()
+		if summary == "" {
+			summary = fmt.Sprintf("**Commit:** %s\n\n**Message:** %s\n\n**Author:** %s\n\n**Date:** %s\n\n**Statistics:**\n- Files changed: %d\n- Lines added: %d\n- Lines deleted: %d",
+				commitDetailedInfo.Hash, commitDetailedInfo.Message, commitDetailedInfo.Author, commitDetailedInfo.Date.Format("2006-01-02 15:04:05"),
+				filesChanged, linesAdded, linesDeleted)
+		}
+	}
+
+	return summary, commitDetailedInfo, nil
+}
+
+// generateAISummary uses cursor-agent to generate an AI summary of the commit
+func (s *Server) generateAISummary(commit *object.Commit, diffSummary, repoPath string) string {
+	// Check if cursor-agent is available
+	cursorAgentPath, err := exec.LookPath("cursor-agent")
+	if err != nil {
+		s.Logger.Debugf("cursor-agent not available for commit summary")
+		return ""
+	}
+
+	// Prepare commit information for AI analysis
+	prompt := fmt.Sprintf("Analyze this git commit and provide a concise summary of the changes:\n\nCommit Hash: %s\nAuthor: %s\nDate: %s\nMessage: %s\n\n%s\n\nProvide a clear, concise summary of what this commit changes, focusing on:\n1. What functionality was added, modified, or removed\n2. Key technical changes\n3. Impact on the codebase\n\nKeep the summary to 2-3 paragraphs.",
+		commit.Hash.String()[:8],
+		commit.Author.Name,
+		commit.Author.When.Format("2006-01-02 15:04:05"),
+		strings.TrimSpace(commit.Message),
+		diffSummary)
+
+	// Try different cursor-agent commands
+	commands := [][]string{
+		{cursorAgentPath, "analyze", "--prompt", prompt},
+		{cursorAgentPath, "summarize", prompt},
+		{cursorAgentPath, prompt},
+	}
+
+	for _, cmdArgs := range commands {
+		cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
+		cmd.Dir = repoPath
+		
+		output, err := cmd.CombinedOutput()
+		if err == nil && len(output) > 0 {
+			result := strings.TrimSpace(string(output))
+			if len(result) > 50 { // Only return if we got a substantial response
+				return result
+			}
+		}
+	}
+
+	s.Logger.Debugf("cursor-agent summary generation failed for all command variations")
+	return ""
 }
 
 // extractRepoNameFromURL extracts repository name from URL
@@ -764,6 +1036,8 @@ const indexHTML = `<!DOCTYPE html>
             --accent-secondary: #f7c859;
             --accent-tertiary: #00d4aa;
             --accent-blue: #5b8def;
+            --accent-purple: #9d4edd;
+            --accent-cyan: #00f5ff;
             --text-primary: #f5f5f7;
             --text-secondary: #a0a0b0;
             --text-muted: #6b6b7b;
@@ -771,9 +1045,14 @@ const indexHTML = `<!DOCTYPE html>
             --success: #00d4aa;
             --warning: #f7c859;
             --error: #ff5555;
-            --gradient-accent: linear-gradient(135deg, #ff6b35 0%, #f7c859 100%);
+            --gradient-accent: linear-gradient(135deg, #ff6b35 0%, #f7c859 50%, #00d4aa 100%);
             --gradient-bg: radial-gradient(ellipse at top, #1a1a2e 0%, #0a0a0f 50%);
+            --gradient-holographic: linear-gradient(135deg, #ff6b35 0%, #f7c859 25%, #00d4aa 50%, #5b8def 75%, #9d4edd 100%);
+            --gradient-glass: linear-gradient(135deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0.05) 100%);
             --shadow-glow: 0 0 40px rgba(255, 107, 53, 0.15);
+            --shadow-glow-cyan: 0 0 30px rgba(0, 245, 255, 0.3);
+            --shadow-glow-purple: 0 0 30px rgba(157, 78, 221, 0.3);
+            --shadow-neon: 0 0 20px rgba(255, 107, 53, 0.5), 0 0 40px rgba(255, 107, 53, 0.3), 0 0 60px rgba(255, 107, 53, 0.1);
         }
 
         * {
@@ -784,33 +1063,104 @@ const indexHTML = `<!DOCTYPE html>
 
         body {
             font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
-            background: var(--gradient-bg);
+            background: var(--bg-primary);
             color: var(--text-primary);
             min-height: 100vh;
             line-height: 1.6;
+            position: relative;
+            overflow-x: hidden;
+        }
+
+        /* Animated Grid Background */
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image: 
+                linear-gradient(rgba(255, 107, 53, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 107, 53, 0.03) 1px, transparent 1px);
+            background-size: 50px 50px;
+            animation: gridMove 20s linear infinite;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        @keyframes gridMove {
+            0% { transform: translate(0, 0); }
+            100% { transform: translate(50px, 50px); }
+        }
+
+        /* Animated Gradient Orbs */
+        body::after {
+            content: '';
+            position: fixed;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: 
+                radial-gradient(circle at 20% 30%, rgba(255, 107, 53, 0.1) 0%, transparent 50%),
+                radial-gradient(circle at 80% 70%, rgba(0, 245, 255, 0.1) 0%, transparent 50%),
+                radial-gradient(circle at 50% 50%, rgba(157, 78, 221, 0.1) 0%, transparent 50%);
+            animation: orbFloat 30s ease-in-out infinite;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        @keyframes orbFloat {
+            0%, 100% { transform: translate(0, 0) scale(1); }
+            33% { transform: translate(30px, -30px) scale(1.1); }
+            66% { transform: translate(-30px, 30px) scale(0.9); }
         }
 
         .app-container {
             display: grid;
             grid-template-columns: 380px 1fr;
             min-height: 100vh;
+            position: relative;
+            z-index: 1;
         }
 
         /* Sidebar */
         .sidebar {
-            background: var(--bg-secondary);
-            border-right: 1px solid var(--border-color);
+            background: rgba(18, 18, 26, 0.8);
+            backdrop-filter: blur(20px) saturate(180%);
+            -webkit-backdrop-filter: blur(20px) saturate(180%);
+            border-right: 1px solid rgba(255, 107, 53, 0.2);
             display: flex;
             flex-direction: column;
             height: 100vh;
             position: sticky;
             top: 0;
+            box-shadow: 0 0 60px rgba(0, 0, 0, 0.5), inset 0 0 60px rgba(255, 107, 53, 0.05);
         }
 
         .sidebar-header {
             padding: 24px;
-            border-bottom: 1px solid var(--border-color);
-            background: linear-gradient(180deg, var(--bg-tertiary) 0%, var(--bg-secondary) 100%);
+            border-bottom: 1px solid rgba(255, 107, 53, 0.2);
+            background: linear-gradient(180deg, rgba(26, 26, 36, 0.6) 0%, rgba(18, 18, 26, 0.4) 100%);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            position: relative;
+        }
+
+        .sidebar-header::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, var(--accent-primary), transparent);
+            animation: shimmer 3s ease-in-out infinite;
+        }
+
+        @keyframes shimmer {
+            0%, 100% { opacity: 0.3; }
+            50% { opacity: 1; }
         }
 
         .logo {
@@ -818,26 +1168,57 @@ const indexHTML = `<!DOCTYPE html>
             align-items: center;
             gap: 12px;
             margin-bottom: 16px;
+            position: relative;
         }
 
         .logo-icon {
             width: 40px;
             height: 40px;
-            background: var(--gradient-accent);
+            background: var(--gradient-holographic);
+            background-size: 200% 200%;
             border-radius: 10px;
             display: flex;
             align-items: center;
             justify-content: center;
             font-size: 20px;
+            box-shadow: var(--shadow-neon);
+            animation: gradientShift 5s ease infinite;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .logo-icon::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: linear-gradient(45deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+            animation: shine 3s infinite;
+        }
+
+        @keyframes gradientShift {
+            0%, 100% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+        }
+
+        @keyframes shine {
+            0% { transform: translateX(-100%) translateY(-100%) rotate(45deg); }
+            100% { transform: translateX(100%) translateY(100%) rotate(45deg); }
         }
 
         .logo-text {
             font-size: 20px;
             font-weight: 700;
-            background: var(--gradient-accent);
+            background: var(--gradient-holographic);
+            background-size: 200% 200%;
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
+            animation: gradientShift 5s ease infinite;
+            text-shadow: 0 0 30px rgba(255, 107, 53, 0.5);
+            filter: drop-shadow(0 0 10px rgba(255, 107, 53, 0.3));
         }
 
         .version-badge {
@@ -924,19 +1305,42 @@ const indexHTML = `<!DOCTYPE html>
         .text-input {
             width: 100%;
             padding: 10px 14px;
-            background: var(--bg-tertiary);
-            border: 1px solid var(--border-color);
+            background: rgba(26, 26, 36, 0.6);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 107, 53, 0.2);
             border-radius: 8px;
             color: var(--text-primary);
             font-family: 'JetBrains Mono', monospace;
             font-size: 14px;
             outline: none;
-            transition: border-color 0.2s, box-shadow 0.2s;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+        }
+
+        .text-input::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: 8px;
+            padding: 1px;
+            background: var(--gradient-accent);
+            -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+            -webkit-mask-composite: xor;
+            mask-composite: exclude;
+            opacity: 0;
+            transition: opacity 0.3s;
         }
 
         .text-input:focus {
             border-color: var(--accent-primary);
-            box-shadow: 0 0 0 2px rgba(255, 107, 53, 0.2);
+            box-shadow: 0 0 0 2px rgba(255, 107, 53, 0.2), 0 0 20px rgba(255, 107, 53, 0.3);
+            background: rgba(26, 26, 36, 0.8);
+            transform: translateY(-1px);
+        }
+
+        .text-input:focus::before {
+            opacity: 1;
         }
 
         .text-input::placeholder {
@@ -959,14 +1363,39 @@ const indexHTML = `<!DOCTYPE html>
         }
 
         .btn-primary {
-            background: var(--gradient-accent);
+            background: var(--gradient-holographic);
+            background-size: 200% 200%;
             color: var(--bg-primary);
             width: 100%;
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 4px 15px rgba(255, 107, 53, 0.3);
+            animation: gradientShift 5s ease infinite;
+        }
+
+        .btn-primary::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+            transition: left 0.5s;
         }
 
         .btn-primary:hover {
-            box-shadow: var(--shadow-glow);
-            transform: translateY(-2px);
+            box-shadow: var(--shadow-neon);
+            transform: translateY(-2px) scale(1.02);
+            animation: gradientShift 2s ease infinite;
+        }
+
+        .btn-primary:hover::before {
+            left: 100%;
+        }
+
+        .btn-primary:active {
+            transform: translateY(0) scale(0.98);
         }
 
         .btn-secondary {
@@ -1021,22 +1450,54 @@ const indexHTML = `<!DOCTYPE html>
         .repo-item {
             padding: 14px 16px;
             margin-bottom: 6px;
-            background: var(--bg-card);
-            border: 1px solid transparent;
+            background: rgba(22, 22, 31, 0.6);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 107, 53, 0.1);
             border-radius: 10px;
             cursor: pointer;
-            transition: all 0.2s;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
             position: relative;
+            overflow: hidden;
+        }
+
+        .repo-item::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 107, 53, 0.1), transparent);
+            transition: left 0.5s;
         }
 
         .repo-item:hover {
-            border-color: var(--border-color);
-            background: var(--bg-tertiary);
+            border-color: var(--accent-primary);
+            background: rgba(26, 26, 36, 0.8);
+            box-shadow: 0 4px 20px rgba(255, 107, 53, 0.2);
+            transform: translateX(4px);
+        }
+
+        .repo-item:hover::before {
+            left: 100%;
         }
 
         .repo-item.selected {
             border-color: var(--accent-primary);
-            background: rgba(255, 107, 53, 0.1);
+            background: rgba(255, 107, 53, 0.15);
+            box-shadow: 0 0 20px rgba(255, 107, 53, 0.3), inset 0 0 20px rgba(255, 107, 53, 0.1);
+        }
+
+        .repo-item.selected::after {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 3px;
+            background: var(--gradient-accent);
+            box-shadow: 0 0 10px var(--accent-primary);
         }
 
         .repo-item.dragging {
@@ -1071,6 +1532,8 @@ const indexHTML = `<!DOCTYPE html>
         .main-content {
             padding: 32px;
             overflow-y: auto;
+            position: relative;
+            z-index: 1;
         }
 
         .content-header {
@@ -1081,6 +1544,13 @@ const indexHTML = `<!DOCTYPE html>
             font-size: 32px;
             font-weight: 700;
             margin-bottom: 8px;
+            background: var(--gradient-holographic);
+            background-size: 200% 200%;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            animation: gradientShift 5s ease infinite;
+            filter: drop-shadow(0 0 20px rgba(255, 107, 53, 0.4));
         }
 
         .content-subtitle {
@@ -1090,19 +1560,48 @@ const indexHTML = `<!DOCTYPE html>
 
         /* Drop Zone */
         .drop-zone {
-            border: 2px dashed var(--border-color);
+            border: 2px dashed rgba(255, 107, 53, 0.3);
             border-radius: 16px;
             padding: 60px 40px;
             text-align: center;
             margin-bottom: 32px;
-            transition: all 0.3s;
-            background: var(--bg-secondary);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            background: rgba(18, 18, 26, 0.6);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .drop-zone::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: 16px;
+            padding: 2px;
+            background: var(--gradient-accent);
+            -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+            -webkit-mask-composite: xor;
+            mask-composite: exclude;
+            opacity: 0;
+            transition: opacity 0.3s;
         }
 
         .drop-zone.drag-over {
             border-color: var(--accent-primary);
-            background: rgba(255, 107, 53, 0.05);
-            box-shadow: var(--shadow-glow);
+            background: rgba(255, 107, 53, 0.1);
+            box-shadow: var(--shadow-neon);
+            transform: scale(1.02);
+        }
+
+        .drop-zone.drag-over::before {
+            opacity: 1;
+            animation: borderPulse 2s ease-in-out infinite;
+        }
+
+        @keyframes borderPulse {
+            0%, 100% { opacity: 0.5; }
+            50% { opacity: 1; }
         }
 
         .drop-zone-icon {
@@ -1163,22 +1662,42 @@ const indexHTML = `<!DOCTYPE html>
             align-items: center;
             gap: 8px;
             padding: 10px 16px;
-            background: var(--bg-tertiary);
-            border: 1px solid var(--border-color);
+            background: rgba(26, 26, 36, 0.6);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 107, 53, 0.2);
             border-radius: 30px;
             font-size: 14px;
             font-weight: 500;
             cursor: pointer;
-            transition: all 0.2s;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .selected-chip::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: var(--gradient-accent);
+            opacity: 0;
+            transition: opacity 0.3s;
         }
 
         .selected-chip.active {
             border-color: var(--accent-primary);
-            background: rgba(255, 107, 53, 0.1);
+            background: rgba(255, 107, 53, 0.2);
+            box-shadow: 0 0 20px rgba(255, 107, 53, 0.3);
+        }
+
+        .selected-chip.active::before {
+            opacity: 0.1;
         }
 
         .selected-chip:hover {
             border-color: var(--accent-primary);
+            box-shadow: 0 4px 15px rgba(255, 107, 53, 0.2);
+            transform: translateY(-2px);
         }
 
         .chip-remove {
@@ -1194,11 +1713,32 @@ const indexHTML = `<!DOCTYPE html>
 
         /* Branch Selector - Dropdown Style */
         .branch-selector {
-            background: var(--bg-secondary);
-            border: 1px solid var(--border-color);
+            background: rgba(18, 18, 26, 0.7);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 107, 53, 0.2);
             border-radius: 12px;
             padding: 16px 20px;
             margin-bottom: 24px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3), inset 0 0 30px rgba(255, 107, 53, 0.05);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .branch-selector::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 107, 53, 0.1), transparent);
+            animation: scan 3s ease-in-out infinite;
+        }
+
+        @keyframes scan {
+            0% { left: -100%; }
+            50%, 100% { left: 100%; }
         }
 
         .branch-selector-header {
@@ -1305,10 +1845,28 @@ const indexHTML = `<!DOCTYPE html>
 
         /* Release Notes */
         .release-notes-container {
-            background: var(--bg-secondary);
-            border: 1px solid var(--border-color);
+            background: rgba(18, 18, 26, 0.7);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 107, 53, 0.2);
             border-radius: 16px;
             overflow: hidden;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), inset 0 0 40px rgba(255, 107, 53, 0.05);
+            position: relative;
+        }
+
+        .release-notes-container::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: 16px;
+            padding: 1px;
+            background: var(--gradient-holographic);
+            -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+            -webkit-mask-composite: xor;
+            mask-composite: exclude;
+            opacity: 0.3;
+            pointer-events: none;
         }
 
         .release-notes-header {
@@ -1318,11 +1876,338 @@ const indexHTML = `<!DOCTYPE html>
             padding: 20px 24px;
             border-bottom: 1px solid var(--border-color);
             background: var(--bg-tertiary);
+            flex-wrap: wrap;
+            gap: 16px;
         }
 
         .release-notes-title {
             font-size: 16px;
             font-weight: 600;
+        }
+
+        .release-notes-header-controls {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .search-container {
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+
+        .search-input {
+            padding: 8px 36px 8px 14px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            width: 280px;
+            outline: none;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+
+        .search-input:focus {
+            border-color: var(--accent-primary);
+            box-shadow: 0 0 0 2px rgba(255, 107, 53, 0.2), 0 0 20px rgba(255, 107, 53, 0.3);
+            background: rgba(18, 18, 26, 0.9);
+            transform: translateY(-1px);
+        }
+
+        .search-input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .search-icon {
+            position: absolute;
+            right: 10px;
+            color: var(--text-muted);
+            font-size: 14px;
+            pointer-events: none;
+        }
+
+        .search-clear {
+            position: absolute;
+            right: 10px;
+            color: var(--text-muted);
+            font-size: 16px;
+            cursor: pointer;
+            display: none;
+            transition: color 0.2s;
+        }
+
+        .search-clear:hover {
+            color: var(--error);
+        }
+
+        .search-clear.visible {
+            display: block;
+        }
+
+        .search-results-info {
+            font-size: 12px;
+            color: var(--text-muted);
+            font-family: 'JetBrains Mono', monospace;
+            white-space: nowrap;
+        }
+
+        .highlight {
+            background: linear-gradient(135deg, var(--accent-secondary), var(--accent-primary));
+            color: var(--bg-primary);
+            padding: 2px 4px;
+            border-radius: 3px;
+            font-weight: 600;
+            box-shadow: 0 0 10px rgba(247, 200, 89, 0.5);
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { box-shadow: 0 0 10px rgba(247, 200, 89, 0.5); }
+            50% { box-shadow: 0 0 20px rgba(247, 200, 89, 0.8); }
+        }
+
+        .no-results {
+            padding: 40px;
+            text-align: center;
+            color: var(--text-muted);
+            font-style: italic;
+        }
+
+        /* Commit Summary Modal */
+        .commit-summary-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            z-index: 2000;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .commit-summary-modal.active {
+            display: flex;
+        }
+
+        .commit-summary-overlay {
+            position: absolute;
+            inset: 0;
+            background: rgba(10, 10, 15, 0.95);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+        }
+
+        .commit-summary-content {
+            position: relative;
+            background: rgba(18, 18, 26, 0.95);
+            backdrop-filter: blur(30px);
+            -webkit-backdrop-filter: blur(30px);
+            border: 1px solid rgba(255, 107, 53, 0.3);
+            border-radius: 20px;
+            width: 100%;
+            max-width: 800px;
+            max-height: 90vh;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5), 0 0 40px rgba(255, 107, 53, 0.2);
+            animation: modalSlideIn 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        @keyframes modalSlideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-20px) scale(0.95);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+        }
+
+        .commit-summary-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 24px;
+            border-bottom: 1px solid rgba(255, 107, 53, 0.2);
+            background: linear-gradient(135deg, rgba(255, 107, 53, 0.1), rgba(0, 245, 255, 0.05));
+        }
+
+        .commit-summary-title {
+            font-size: 20px;
+            font-weight: 700;
+            background: var(--gradient-holographic);
+            background-size: 200% 200%;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            animation: gradientShift 5s ease infinite;
+        }
+
+        .commit-summary-close {
+            width: 36px;
+            height: 36px;
+            border: none;
+            background: rgba(255, 107, 53, 0.1);
+            border: 1px solid rgba(255, 107, 53, 0.3);
+            border-radius: 8px;
+            color: var(--accent-primary);
+            font-size: 24px;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            line-height: 1;
+        }
+
+        .commit-summary-close:hover {
+            background: rgba(255, 107, 53, 0.2);
+            border-color: var(--accent-primary);
+            box-shadow: 0 0 20px rgba(255, 107, 53, 0.4);
+            transform: rotate(90deg);
+        }
+
+        .commit-summary-body {
+            padding: 24px;
+            overflow-y: auto;
+            flex: 1;
+            color: var(--text-primary);
+        }
+
+        .commit-summary-loading {
+            text-align: center;
+            padding: 40px;
+        }
+
+        .commit-summary-loading .spinner {
+            margin: 0 auto 20px;
+        }
+
+        .commit-summary-info {
+            margin-bottom: 24px;
+            padding: 16px;
+            background: rgba(26, 26, 36, 0.6);
+            backdrop-filter: blur(10px);
+            border-radius: 12px;
+            border: 1px solid rgba(255, 107, 53, 0.2);
+        }
+
+        .commit-summary-info-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .commit-summary-hash {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 14px;
+            color: var(--accent-blue);
+            background: rgba(91, 141, 239, 0.1);
+            padding: 4px 12px;
+            border-radius: 6px;
+        }
+
+        .commit-summary-message {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            color: var(--text-primary);
+        }
+
+        .commit-summary-meta {
+            display: flex;
+            gap: 16px;
+            font-size: 13px;
+            color: var(--text-secondary);
+            flex-wrap: wrap;
+        }
+
+        .commit-summary-stats {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+
+        .commit-summary-stat {
+            background: rgba(26, 26, 36, 0.6);
+            backdrop-filter: blur(10px);
+            padding: 16px;
+            border-radius: 10px;
+            border: 1px solid rgba(255, 107, 53, 0.2);
+            text-align: center;
+        }
+
+        .commit-summary-stat-value {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--accent-primary);
+            font-family: 'JetBrains Mono', monospace;
+            display: block;
+            margin-bottom: 4px;
+        }
+
+        .commit-summary-stat-label {
+            font-size: 12px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .commit-summary-text {
+            line-height: 1.8;
+            font-size: 15px;
+            color: var(--text-secondary);
+        }
+
+        .commit-summary-text h2,
+        .commit-summary-text h3 {
+            color: var(--text-primary);
+            margin-top: 24px;
+            margin-bottom: 12px;
+        }
+
+        .commit-summary-text h2 {
+            font-size: 18px;
+            border-bottom: 1px solid rgba(255, 107, 53, 0.2);
+            padding-bottom: 8px;
+        }
+
+        .commit-summary-text h3 {
+            font-size: 16px;
+        }
+
+        .commit-summary-text ul,
+        .commit-summary-text ol {
+            margin-left: 20px;
+            margin-bottom: 16px;
+        }
+
+        .commit-summary-text li {
+            margin-bottom: 8px;
+        }
+
+        .commit-summary-text code {
+            background: rgba(255, 107, 53, 0.1);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            color: var(--accent-primary);
+        }
+
+        .commit-summary-error {
+            text-align: center;
+            padding: 40px;
+            color: var(--error);
         }
 
         .view-toggle {
@@ -1487,18 +2372,52 @@ const indexHTML = `<!DOCTYPE html>
         }
 
         .stat-card {
-            background: var(--bg-tertiary);
+            background: rgba(26, 26, 36, 0.6);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
             padding: 20px;
             border-radius: 12px;
             text-align: center;
+            border: 1px solid rgba(255, 107, 53, 0.2);
+            transition: all 0.3s;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: var(--gradient-accent);
+            transform: scaleX(0);
+            transition: transform 0.3s;
+        }
+
+        .stat-card:hover {
+            border-color: var(--accent-primary);
+            box-shadow: 0 4px 20px rgba(255, 107, 53, 0.3);
+            transform: translateY(-4px);
+        }
+
+        .stat-card:hover::before {
+            transform: scaleX(1);
         }
 
         .stat-value {
             display: block;
             font-size: 32px;
             font-weight: 700;
-            color: var(--accent-primary);
+            background: var(--gradient-accent);
+            background-size: 200% 200%;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
             font-family: 'JetBrains Mono', monospace;
+            animation: gradientShift 3s ease infinite;
+            filter: drop-shadow(0 0 10px rgba(255, 107, 53, 0.5));
         }
 
         .stat-label {
@@ -1551,30 +2470,75 @@ const indexHTML = `<!DOCTYPE html>
             font-style: italic;
         }
 
+        .commit-item-wrapper {
+            position: relative;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
         .commit-item-link {
             text-decoration: none;
             color: inherit;
             display: block;
+            flex: 1;
         }
 
         .commit-item {
             padding: 14px 16px;
-            background: var(--bg-tertiary);
+            background: rgba(26, 26, 36, 0.6);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
             border-radius: 8px;
             display: grid;
             gap: 8px;
-            border: 1px solid transparent;
-            transition: all 0.2s;
+            border: 1px solid rgba(91, 141, 239, 0.2);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            cursor: pointer;
         }
 
         .commit-item-link:hover .commit-item {
             border-color: var(--accent-blue);
-            background: rgba(91, 141, 239, 0.1);
+            background: rgba(91, 141, 239, 0.15);
             transform: translateX(4px);
+            box-shadow: 0 4px 15px rgba(91, 141, 239, 0.2);
         }
 
         .commit-item-link:hover .commit-link-icon {
             opacity: 1;
+        }
+
+        .commit-summary-btn {
+            padding: 10px 14px;
+            background: rgba(255, 107, 53, 0.1);
+            border: 1px solid rgba(255, 107, 53, 0.3);
+            border-radius: 8px;
+            color: var(--accent-primary);
+            cursor: pointer;
+            transition: all 0.3s;
+            font-size: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            transform: scale(0.8);
+        }
+
+        .commit-item-wrapper:hover .commit-summary-btn {
+            opacity: 1;
+            transform: scale(1);
+        }
+
+        .commit-summary-btn:hover {
+            background: rgba(255, 107, 53, 0.2);
+            border-color: var(--accent-primary);
+            box-shadow: 0 0 20px rgba(255, 107, 53, 0.4);
+            transform: scale(1.1);
+        }
+
+        .commit-summary-btn:active {
+            transform: scale(0.95);
         }
 
         .commit-header {
@@ -1637,11 +2601,26 @@ const indexHTML = `<!DOCTYPE html>
         .spinner {
             width: 50px;
             height: 50px;
-            border: 3px solid var(--border-color);
+            border: 3px solid rgba(255, 107, 53, 0.2);
             border-top-color: var(--accent-primary);
+            border-right-color: var(--accent-tertiary);
+            border-bottom-color: var(--accent-blue);
             border-radius: 50%;
             animation: spin 1s linear infinite;
             margin: 0 auto 20px;
+            box-shadow: 0 0 20px rgba(255, 107, 53, 0.5);
+            position: relative;
+        }
+
+        .spinner::before {
+            content: '';
+            position: absolute;
+            inset: -5px;
+            border-radius: 50%;
+            border: 2px solid transparent;
+            border-top-color: var(--accent-primary);
+            animation: spin 0.5s linear infinite reverse;
+            opacity: 0.5;
         }
 
         @keyframes spin {
@@ -1805,9 +2784,17 @@ const indexHTML = `<!DOCTYPE html>
             <div class="release-notes-container" id="releaseNotesContainer" style="display: none;">
                 <div class="release-notes-header">
                     <span class="release-notes-title">📋 Release Notes</span>
-                    <div class="view-toggle">
-                        <button class="toggle-btn active" data-view="html">Rich View</button>
-                        <button class="toggle-btn" data-view="text">Plain Text</button>
+                    <div class="release-notes-header-controls">
+                        <div class="search-container">
+                            <input type="text" class="search-input" id="bugSearchInput" placeholder="Search bugs (e.g., OCPBUG-12345)">
+                            <span class="search-icon">🔍</span>
+                            <span class="search-clear" id="searchClear">×</span>
+                        </div>
+                        <span class="search-results-info" id="searchResultsInfo"></span>
+                        <div class="view-toggle">
+                            <button class="toggle-btn active" data-view="html">Rich View</button>
+                            <button class="toggle-btn" data-view="text">Plain Text</button>
+                        </div>
                     </div>
                 </div>
                 <div class="release-notes-body" id="releaseNotesBody">
@@ -1822,6 +2809,23 @@ const indexHTML = `<!DOCTYPE html>
                 <p>Select an operator and branch to generate release notes</p>
             </div>
         </main>
+    </div>
+
+    <!-- Commit Summary Modal -->
+    <div class="commit-summary-modal" id="commitSummaryModal">
+        <div class="commit-summary-overlay"></div>
+        <div class="commit-summary-content">
+            <div class="commit-summary-header">
+                <h3 class="commit-summary-title">🤖 AI Commit Summary</h3>
+                <button class="commit-summary-close" id="commitSummaryClose">×</button>
+            </div>
+            <div class="commit-summary-body" id="commitSummaryBody">
+                <div class="commit-summary-loading">
+                    <div class="spinner"></div>
+                    <p>Analyzing commit changes...</p>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Loading Overlay -->
@@ -1861,6 +2865,12 @@ const indexHTML = `<!DOCTYPE html>
         const loadingOverlay = document.getElementById('loadingOverlay');
         const loadingText = document.getElementById('loadingText');
         const clearAllBtn = document.getElementById('clearAllBtn');
+        const bugSearchInput = document.getElementById('bugSearchInput');
+        const searchClear = document.getElementById('searchClear');
+        const searchResultsInfo = document.getElementById('searchResultsInfo');
+        const commitSummaryModal = document.getElementById('commitSummaryModal');
+        const commitSummaryClose = document.getElementById('commitSummaryClose');
+        const commitSummaryBody = document.getElementById('commitSummaryBody');
 
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {
@@ -1911,6 +2921,41 @@ const indexHTML = `<!DOCTYPE html>
                     currentView = btn.dataset.view;
                     updateReleaseNotesView();
                 });
+            });
+
+            // Bug search input
+            bugSearchInput.addEventListener('input', handleBugSearch);
+            bugSearchInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') {
+                    clearBugSearch();
+                }
+            });
+
+            // Search clear button
+            searchClear.addEventListener('click', clearBugSearch);
+
+            // Commit summary modal close
+            commitSummaryClose.addEventListener('click', closeCommitSummary);
+            commitSummaryModal.querySelector('.commit-summary-overlay').addEventListener('click', closeCommitSummary);
+
+            // Close modal on Escape key
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && commitSummaryModal.classList.contains('active')) {
+                    closeCommitSummary();
+                }
+            });
+
+            // Delegate commit summary button clicks (for dynamically added commits)
+            document.addEventListener('click', (e) => {
+                if (e.target.closest('.commit-summary-btn')) {
+                    const btn = e.target.closest('.commit-summary-btn');
+                    const commitHash = btn.dataset.commitHash;
+                    if (commitHash && activeOperator && selectedBranch) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        showCommitSummary(commitHash);
+                    }
+                }
             });
         }
 
@@ -2198,6 +3243,200 @@ const indexHTML = `<!DOCTYPE html>
             } else {
                 releaseNotesBody.innerHTML = '<pre>' + escapeHtml(currentReleaseNotes.text) + '</pre>';
             }
+            // Re-apply search if there's an active search term
+            if (bugSearchInput.value.trim()) {
+                handleBugSearch();
+            }
+        }
+
+        function handleBugSearch() {
+            const searchTerm = bugSearchInput.value.trim();
+            
+            // Show/hide clear button
+            if (searchTerm) {
+                searchClear.classList.add('visible');
+            } else {
+                searchClear.classList.remove('visible');
+                searchResultsInfo.textContent = '';
+                // Restore original content
+                updateReleaseNotesView();
+                return;
+            }
+
+            // Perform search
+            const searchResults = performSearch(searchTerm);
+            updateSearchResults(searchResults);
+        }
+
+        function performSearch(searchTerm) {
+            let matchCount = 0;
+            const searchRegex = new RegExp(escapeRegex(searchTerm), 'gi');
+            const originalContent = currentView === 'html' ? currentReleaseNotes.html : currentReleaseNotes.text;
+            
+            if (currentView === 'html') {
+                // For HTML view, search and highlight in the HTML string
+                // Count matches first
+                const matchArray = originalContent.match(searchRegex);
+                matchCount = matchArray ? matchArray.length : 0;
+                
+                // Replace matches with highlighted spans
+                const highlighted = originalContent.replace(searchRegex, (match) => {
+                    return '<span class="highlight">' + escapeHtml(match) + '</span>';
+                });
+                
+                releaseNotesBody.innerHTML = highlighted;
+            } else {
+                // For text view, search in plain text
+                const matchArray = originalContent.match(searchRegex);
+                matchCount = matchArray ? matchArray.length : 0;
+                
+                const highlighted = originalContent.replace(searchRegex, (match) => {
+                    return '<span class="highlight">' + escapeHtml(match) + '</span>';
+                });
+                releaseNotesBody.innerHTML = '<pre>' + highlighted + '</pre>';
+            }
+
+            return { count: matchCount, term: searchTerm };
+        }
+
+        function updateSearchResults(results) {
+            if (results.count > 0) {
+                const plural = results.count !== 1 ? 'es' : '';
+                searchResultsInfo.textContent = results.count + ' match' + plural + ' found';
+                searchResultsInfo.style.color = 'var(--accent-primary)';
+            } else {
+                searchResultsInfo.textContent = 'No matches found';
+                searchResultsInfo.style.color = 'var(--text-muted)';
+            }
+        }
+
+        function clearBugSearch() {
+            bugSearchInput.value = '';
+            searchClear.classList.remove('visible');
+            searchResultsInfo.textContent = '';
+            updateReleaseNotesView();
+        }
+
+        function escapeRegex(str) {
+            return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        }
+
+        async function showCommitSummary(commitHash) {
+            if (!activeOperator || !selectedBranch) {
+                alert('Please select an operator and branch first');
+                return;
+            }
+
+            commitSummaryModal.classList.add('active');
+            commitSummaryBody.innerHTML = '<div class="commit-summary-loading"><div class="spinner"></div><p>Analyzing commit changes...</p></div>';
+
+            try {
+                const response = await fetch('/api/commit-summary', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        repository: activeOperator.url,
+                        branch: selectedBranch,
+                        commitHash: commitHash
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    renderCommitSummary(data);
+                } else {
+                    commitSummaryBody.innerHTML = '<div class="commit-summary-error"><p>❌ Error: ' + escapeHtml(data.errorMessage || 'Failed to generate summary') + '</p></div>';
+                }
+            } catch (error) {
+                console.error('Error fetching commit summary:', error);
+                commitSummaryBody.innerHTML = '<div class="commit-summary-error"><p>❌ Error: Failed to fetch commit summary</p></div>';
+            }
+        }
+
+        function renderCommitSummary(data) {
+            const filesChanged = data.filesChanged || 0;
+            const linesAdded = data.linesAdded || 0;
+            const linesDeleted = data.linesDeleted || 0;
+            
+            const statsHtml = '<div class="commit-summary-stats">' +
+                '<div class="commit-summary-stat">' +
+                '<span class="commit-summary-stat-value">' + filesChanged + '</span>' +
+                '<span class="commit-summary-stat-label">Files Changed</span>' +
+                '</div>' +
+                '<div class="commit-summary-stat">' +
+                '<span class="commit-summary-stat-value">+' + linesAdded + '</span>' +
+                '<span class="commit-summary-stat-label">Lines Added</span>' +
+                '</div>' +
+                '<div class="commit-summary-stat">' +
+                '<span class="commit-summary-stat-value">-' + linesDeleted + '</span>' +
+                '<span class="commit-summary-stat-label">Lines Deleted</span>' +
+                '</div>' +
+                '</div>';
+
+            const infoHtml = '<div class="commit-summary-info">' +
+                '<div class="commit-summary-info-header">' +
+                '<code class="commit-summary-hash">' + escapeHtml(data.commitHash) + '</code>' +
+                '</div>' +
+                '<div class="commit-summary-message">' + escapeHtml(data.commitMessage) + '</div>' +
+                '<div class="commit-summary-meta">' +
+                '<span>👤 ' + escapeHtml(data.author) + '</span>' +
+                '<span>📅 ' + escapeHtml(data.date) + '</span>' +
+                '</div>' +
+                '</div>';
+
+            // Convert markdown-like summary to HTML
+            const summaryHtml = convertMarkdownToHtml(data.summary);
+
+            commitSummaryBody.innerHTML = infoHtml + statsHtml + '<div class="commit-summary-text">' + summaryHtml + '</div>';
+        }
+
+        function convertMarkdownToHtml(text) {
+            if (!text) return '<p>No summary available.</p>';
+            
+            let html = escapeHtml(text);
+            
+            // Convert headers
+            var header3Regex = new RegExp('^### (.*$)', 'gim');
+            html = html.replace(header3Regex, '<h3>$1</h3>');
+            var header2Regex = new RegExp('^## (.*$)', 'gim');
+            html = html.replace(header2Regex, '<h2>$1</h2>');
+            var header1Regex = new RegExp('^# (.*$)', 'gim');
+            html = html.replace(header1Regex, '<h2>$1</h2>');
+            
+            // Convert bold
+            var boldRegex = new RegExp('\\*\\*(.*?)\\*\\*', 'g');
+            html = html.replace(boldRegex, '<strong>$1</strong>');
+            
+            // Convert code blocks
+            var codeRegex = new RegExp(String.fromCharCode(96) + '([^' + String.fromCharCode(96) + ']+)' + String.fromCharCode(96), 'g');
+            html = html.replace(codeRegex, function(match, p1) { return '<code>' + p1 + '</code>'; });
+            
+            // Convert lists
+            var listRegex = new RegExp('^- (.*$)', 'gim');
+            html = html.replace(listRegex, '<li>$1</li>');
+            var ulRegex = new RegExp('(<li>.*</li>)', 's');
+            html = html.replace(ulRegex, '<ul>$1</ul>');
+            
+            // Convert line breaks to paragraphs
+            var paragraphs = html.split('\\n\\n');
+            html = '';
+            for (var i = 0; i < paragraphs.length; i++) {
+                var para = paragraphs[i].trim();
+                if (!para) continue;
+                if (para.indexOf('<h') === 0 || para.indexOf('<ul') === 0 || para.indexOf('<li') === 0) {
+                    html += para;
+                } else {
+                    html += '<p>' + para + '</p>';
+                }
+            }
+            
+            return html;
+        }
+
+        function closeCommitSummary() {
+            commitSummaryModal.classList.remove('active');
+            commitSummaryBody.innerHTML = '';
         }
 
         function showLoading(text) {

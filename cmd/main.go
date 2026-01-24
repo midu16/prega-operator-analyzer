@@ -273,12 +273,13 @@ func generateIndexJSON(pregaIndex, outputPath string, logger *logrus.Logger) err
 		return fmt.Errorf("failed to create directory %s: %w", dir, err)
 	}
 
-	// Check if opm is available
-	opmPath, err := exec.LookPath("opm")
+	// Find or download opm
+	dm := pkg.NewDependencyManager(".bin", logger)
+	opmPath, err := dm.FindOrDownloadTool("opm")
 	if err != nil {
-		return fmt.Errorf("opm command not found in PATH. Please ensure opm is installed and available: %w", err)
+		return fmt.Errorf("opm command not found and could not be downloaded: %w", err)
 	}
-	logger.Debugf("Found opm at: %s", opmPath)
+	logger.Debugf("Using opm at: %s", opmPath)
 
 	// Create output file
 	outputFile, err := os.Create(outputPath)
@@ -288,11 +289,11 @@ func generateIndexJSON(pregaIndex, outputPath string, logger *logrus.Logger) err
 	defer outputFile.Close()
 
 	// Execute opm render command
-	cmd := exec.Command("opm", "render", pregaIndex, "--output=json")
+	cmd := exec.Command(opmPath, "render", pregaIndex, "--output=json")
 	cmd.Stdout = outputFile
 	cmd.Stderr = os.Stderr
 
-	logger.Debugf("Executing command: opm render %s --output=json > %s", pregaIndex, outputPath)
+	logger.Debugf("Executing command: %s render %s --output=json > %s", opmPath, pregaIndex, outputPath)
 	
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to execute opm render command: %w", err)

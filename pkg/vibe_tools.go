@@ -191,13 +191,15 @@ func (vtm *VibeToolsManager) generateReleaseNotes(repoURL string) (string, error
 	}
 }
 
-// isVibeToolsAvailable checks if vibe-tools is available in PATH
+// isVibeToolsAvailable checks if vibe-tools is available in PATH or .bin/
 func (vtm *VibeToolsManager) isVibeToolsAvailable() bool {
-	_, err := exec.LookPath("vibe-tools")
+	dm := NewDependencyManager(".bin", vtm.Logger)
+	_, err := dm.FindOrDownloadTool("vibe-tools")
 	return err == nil
 }
 
 // isCursorAgentAvailable checks if cursor-agent is available in PATH
+// Note: cursor-agent cannot be auto-downloaded
 func (vtm *VibeToolsManager) isCursorAgentAvailable() bool {
 	_, err := exec.LookPath("cursor-agent")
 	return err == nil
@@ -207,20 +209,27 @@ func (vtm *VibeToolsManager) isCursorAgentAvailable() bool {
 func (vtm *VibeToolsManager) generateCursorAgentReleaseNotes(repoPath, repoURL string) (string, error) {
 	vtm.Logger.Infof("Running cursor-agent vibe-tools on: %s", repoPath)
 	
+	// Find cursor-agent (cannot be auto-downloaded, must be in PATH)
+	cursorAgentPath, err := exec.LookPath("cursor-agent")
+	if err != nil {
+		vtm.Logger.Warnf("cursor-agent not found in PATH, falling back to basic notes")
+		return vtm.generateBasicReleaseNotes(repoPath, repoURL)
+	}
+	
 	// Calculate date range for last week
 	now := time.Now()
 	oneWeekAgo := now.AddDate(0, 0, -7)
 	sinceDate := oneWeekAgo.Format("2006-01-02")
 	
 	// Try cursor-agent with date range first
-	cmd := exec.Command("cursor-agent", "vibe-tools", "release-notes", "--repo", repoPath, "--branch", "main", "--since", sinceDate)
+	cmd := exec.Command(cursorAgentPath, "vibe-tools", "release-notes", "--repo", repoPath, "--branch", "main", "--since", sinceDate)
 	cmd.Dir = repoPath
 	
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		// Try without date range if the --since flag is not supported
 		vtm.Logger.Infof("cursor-agent with date range failed, trying without date filter: %v", err)
-		cmd = exec.Command("cursor-agent", "vibe-tools", "release-notes", "--repo", repoPath, "--branch", "main")
+		cmd = exec.Command(cursorAgentPath, "vibe-tools", "release-notes", "--repo", repoPath, "--branch", "main")
 		cmd.Dir = repoPath
 		
 		output, err = cmd.CombinedOutput()
@@ -242,20 +251,28 @@ func (vtm *VibeToolsManager) generateCursorAgentReleaseNotes(repoPath, repoURL s
 func (vtm *VibeToolsManager) generateVibeToolsReleaseNotes(repoPath, repoURL string) (string, error) {
 	vtm.Logger.Infof("Running vibe-tools on: %s", repoPath)
 	
+	// Find or download vibe-tools
+	dm := NewDependencyManager(".bin", vtm.Logger)
+	vibeToolsPath, err := dm.FindOrDownloadTool("vibe-tools")
+	if err != nil {
+		vtm.Logger.Warnf("vibe-tools not available and could not be downloaded, falling back to basic notes: %v", err)
+		return vtm.generateBasicReleaseNotes(repoPath, repoURL)
+	}
+	
 	// Calculate date range for last week
 	now := time.Now()
 	oneWeekAgo := now.AddDate(0, 0, -7)
 	sinceDate := oneWeekAgo.Format("2006-01-02")
 	
 	// Try vibe-tools with date range first
-	cmd := exec.Command("vibe-tools", "release-notes", "--repo", repoPath, "--branch", "main", "--since", sinceDate)
+	cmd := exec.Command(vibeToolsPath, "release-notes", "--repo", repoPath, "--branch", "main", "--since", sinceDate)
 	cmd.Dir = repoPath
 	
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		// Try without date range if the --since flag is not supported
 		vtm.Logger.Infof("vibe-tools with date range failed, trying without date filter: %v", err)
-		cmd = exec.Command("vibe-tools", "release-notes", "--repo", repoPath, "--branch", "main")
+		cmd = exec.Command(vibeToolsPath, "release-notes", "--repo", repoPath, "--branch", "main")
 		cmd.Dir = repoPath
 		
 		output, err = cmd.CombinedOutput()

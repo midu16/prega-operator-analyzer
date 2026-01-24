@@ -5,6 +5,7 @@
 *.so
 *.dylib
 bin/
+.bin/
 dist/
 prega-operator-analyzer
 prega-operator-analyzer.service
